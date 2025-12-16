@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "808508481634",
+    "project_id": "hesabati-f9500",
+    "storage_bucket": "hesabati-f9500.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:808508481634:android:1d864515f409922a79713b",
+        "android_client_info": {
+          "package_name": "com.wamdha.hesabati"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCVBAkt7-1a60Hws1ryRRQJ2e1kTuh2TXc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
