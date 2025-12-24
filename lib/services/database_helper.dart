@@ -22,7 +22,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'hesabati.db');
     return await openDatabase(
       path,
-      version: 2, // <-- تغيير 1: زدنا رقم الإصدار من 1 إلى 2
+      version: 5, // <-- تغيير 1: زدنا رقم الإصدار من 1 إلى 2
       onCreate: _onCreate,
       onUpgrade: _onUpgrade, // <-- تغيير 2: أضفنا دالة الترقية
     );
@@ -50,24 +50,24 @@ class DatabaseHelper {
     ''');
   }
 
-  // <-- تغيير 3: هذه هي الدالة الجديدة والمهمة جداً
-  // تُستدعى فقط عندما يتغير رقم الإصدار (مثلاً من 1 إلى 2)
+  // في ملف database_helper.dart
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // نستخدم if للتحقق من الإصدار القديم
-    // هذا مفيد جدًا للترقيات المستقبلية
+    // نستخدم try-catch لتجاهل الخطأ إذا كان العمود موجوداً مسبقاً
     if (oldVersion < 2) {
-      // المستخدم كان على الإصدار 1 ونريد ترقيته للإصدار 2
-      // الأمر التالي يضيف عمود 'currency' إلى جدول 'transactions'
-      // ونعطيه قيمة افتراضية 'SAR' لكل البيانات القديمة حتى لا يحدث خطأ
-      await db.execute("ALTER TABLE transactions ADD COLUMN currency TEXT NOT NULL DEFAULT 'SAR'");
+      try { await db.execute("ALTER TABLE transactions ADD COLUMN currency TEXT NOT NULL DEFAULT 'SAR'"); } catch (e) {}
     }
-
-    // إذا كان لديك ترقية مستقبلية للإصدار 3، ستضيف:
-    // if (oldVersion < 3) {
-    //   // أوامر الترقية للإصدار 3
-    // }
-  }
-
+    if (oldVersion < 3) {
+      try { await db.execute("ALTER TABLE transactions ADD COLUMN imagePath TEXT"); } catch (e) {}
+    }
+    if (oldVersion < 4) {
+      try { await db.execute("ALTER TABLE transactions ADD COLUMN transferId TEXT"); } catch (e) {}
+    }
+    if (oldVersion < 5) { // <--- تم التحديث ليشمل الإصدارات القديمة
+      try { await db.execute("ALTER TABLE transactions ADD COLUMN imagePath TEXT"); } catch (e) {}
+      try { await db.execute("ALTER TABLE transactions ADD COLUMN transferId TEXT"); }
+      catch (e) {}
+    }
+    }
   // --- دوال الأشخاص ---
   Future<int> addPerson(Person person) async {
     Database db = await database;
@@ -127,15 +127,38 @@ class DatabaseHelper {
 // ... داخل كلاس DatabaseHelper
 
 // دالة لحذف معاملة
+  // استبدل دالة deleteTransaction القديمة بهذه الجديدة
   Future<void> deleteTransaction(int id) async {
     final db = await database;
-    await db.delete(
+
+    // 1. أولاً: نجلب تفاصيل المعاملة لنعرف هل لها transferId أم لا
+    final List<Map<String, dynamic>> result = await db.query(
       'transactions',
+      columns: ['transferId'],
       where: 'id = ?',
       whereArgs: [id],
     );
-  }
 
+    if (result.isNotEmpty) {
+      final String? transferId = result.first['transferId'] as String?;
+
+      if (transferId != null && transferId.isNotEmpty) {
+        // 2. إذا كانت حوالة، نحذف كل العمليات المرتبطة بهذا الرقم
+        await db.delete(
+          'transactions',
+          where: 'transferId = ?',
+          whereArgs: [transferId],
+        );
+      } else {
+        // 3. إذا كانت عملية عادية، نحذفها هي فقط
+        await db.delete(
+          'transactions',
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      }
+    }
+  }
 // دالة لجلب مجاميع الإيرادات والمصروفات (للمخطط البياني)
   Future<Map<String, double>> getCategoryTotals(int personId, String currency) async {
     final db = await database;
@@ -209,11 +232,14 @@ class DatabaseHelper {
   }) async {
     final db = await database;
 
-    // نستخدم transaction لضمان تنفيذ العمليتين معاً أو فشلهما معاً (أمان مالي)
+    // إنشاء رقم عملية فريد يربط العمليتين ببعضهما
+    // نستخدم الوقت الحالي كرقم مميز
+    final String transferId = "TR-${DateTime.now().millisecondsSinceEpoch}";
+
     await db.transaction((txn) async {
       final date = DateTime.now().toIso8601String();
 
-      // 1. خصم من المرسل (مصروف)
+      // 1. خصم من المرسل
       await txn.insert('transactions', {
         'personId': fromPersonId,
         'type': 'مصروف',
@@ -221,9 +247,10 @@ class DatabaseHelper {
         'description': 'تحويل إلى: $toPersonName ($description)',
         'date': date,
         'currency': currency,
+        'transferId': transferId, // <-- الرابط
       });
 
-      // 2. إضافة للمستلم (إيراد)
+      // 2. إضافة للمستلم
       await txn.insert('transactions', {
         'personId': toPersonId,
         'type': 'إيراد',
@@ -231,6 +258,7 @@ class DatabaseHelper {
         'description': 'حوالة من: $fromPersonName ($description)',
         'date': date,
         'currency': currency,
+        'transferId': transferId, // <-- نفس الرابط
       });
     });
   }

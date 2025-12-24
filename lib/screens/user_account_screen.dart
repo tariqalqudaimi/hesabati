@@ -1,18 +1,18 @@
-
-import 'dart:ui';
-import 'package:animations/animations.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import '../delegates/transaction_search_delegate.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/person_model.dart';
 import '../models/transaction_model.dart';
 import '../providers/database_providers.dart';
 import '../services/database_helper.dart';
-import 'home_screen.dart'; // لاستيراد الويدجتس الزجاجية
-import '../services/import_service.dart';
 import '../services/export_service.dart';
-// --- الويدجت الرئيسي للشاشة ---
+import '../services/import_service.dart';
+import '../constants/app_colors.dart';
+// لم نعد بحاجة لملف delegate هنا
+
 class UserAccountScreen extends ConsumerStatefulWidget {
   final Person person;
   const UserAccountScreen({super.key, required this.person});
@@ -22,155 +22,275 @@ class UserAccountScreen extends ConsumerStatefulWidget {
 }
 
 class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
-  // حالة محلية لتتبع العملة المختارة
   String _selectedCurrency = 'SAR';
+  DateTime? _startDate;
+  DateTime? _endDate;
 
-  // دالة لتحديث كل البيانات عبر Riverpod بعد أي تغيير
+  // --- متغيرات البحث الجديد ---
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = "";
+
   void _refreshAllData() {
     ref.invalidate(transactionsProvider(widget.person.id!));
-    ref.invalidate(balanceProvider(BalanceParams(personId: widget.person.id!, currency: 'SAR')));
-    ref.invalidate(balanceProvider(BalanceParams(personId: widget.person.id!, currency: 'YER')));
-    ref.invalidate(personsProvider);
+    // تحديث الإجماليات العامة أيضاً
+    ref.invalidate(personsProvider); 
+    ref.invalidate(totalBalanceProvider('SAR'));
+    ref.invalidate(totalBalanceProvider('YER'));
+  }
+
+  Future<void> _pickDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      initialDateRange: _startDate != null && _endDate != null
+          ? DateTimeRange(start: _startDate!, end: _endDate!)
+          : null,
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.light().copyWith(
+            colorScheme: const ColorScheme.light(primary: AppColors.primary),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _startDate = picked.start;
+        _endDate = picked.end;
+      });
+    }
+  }
+
+  void _clearDateFilter() {
+    setState(() {
+      _startDate = null;
+      _endDate = null;
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.person.name),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.upload_file),
-            tooltip: 'استيراد من Excel',
-            onPressed: () {
-              // استدعاء خدمة الاستيراد
-              ImportService().importExcel(context, ref, widget.person.id!, _selectedCurrency);
-            },
-          ),
-          // --- زر التصدير الجديد ---
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.print),
-            tooltip: 'تصدير كشف حساب',
-            // ... داخل PopupMenuButton -> onSelected
-            onSelected: (value) async {
-              final transactions = await ref.read(transactionsProvider(widget.person.id!).future);
-              if (transactions.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد معاملات')));
-                return;
-              }
-
-              try {
-                String path = "";
-                if (value == 'pdf') {
-                  path = await ExportService().exportToPdf(widget.person, transactions);
-                } else if (value == 'excel') {
-                  path = await ExportService().exportToExcel(widget.person, transactions);
-                }
-
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('تم الحفظ في التنزيلات:\n$path'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                }
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'pdf',
-                child: Row(children: [Icon(Icons.picture_as_pdf, color: Colors.red), SizedBox(width: 8), Text('ملف PDF')]),
+      backgroundColor: AppColors.background,
+      body: CustomScrollView(
+        slivers: [
+          // 1. الشريط العلوي (تم دمج البحث فيه)
+          SliverAppBar(
+            expandedHeight: 220.0, // زيادة الارتفاع قليلاً
+            pinned: true,
+            backgroundColor: AppColors.primary,
+            // العنوان: إما اسم الشخص أو حقل البحث
+            title: _isSearching
+                ? TextField(
+              controller: _searchController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+              cursorColor: Colors.white,
+              decoration: const InputDecoration(
+                hintText: 'ابحث في المعاملات...',
+                hintStyle: TextStyle(color: Colors.white60),
+                border: InputBorder.none,
               ),
-              const PopupMenuItem(
-                value: 'excel',
-                child: Row(children: [Icon(Icons.table_chart, color: Colors.green), SizedBox(width: 8), Text('ملف Excel')]),
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                });
+              },
+            )
+                : Text(widget.person.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            centerTitle: true,
+
+            flexibleSpace: FlexibleSpaceBar(
+              background: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.primary, AppColors.secondary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: SafeArea(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(height: 40), // مسافة لعدم تغطية العنوان
+                      // نمرر تواريخ الفلترة للهيدر ليحسب الرصيد بناءً عليها
+                      UserBalanceHeader(
+                        personId: widget.person.id!, 
+                        currency: _selectedCurrency,
+                        startDate: _startDate,
+                        endDate: _endDate,
+                        searchQuery: _searchQuery,
+                      ),
+                    ],
+                  ),
+                ),
               ),
+            ),
+            actions: [
+              // زر تفعيل/إلغاء البحث
+              IconButton(
+                icon: Icon(_isSearching ? Icons.close : Icons.search, color: Colors.white),
+                onPressed: () {
+                  setState(() {
+                    if (_isSearching) {
+                      // عند الإغلاق: نظف البحث وأخف الحقل
+                      _isSearching = false;
+                      _searchQuery = "";
+                      _searchController.clear();
+                    } else {
+                      // عند الفتح
+                      _isSearching = true;
+                    }
+                  });
+                },
+              ),
+
+              // باقي الأزرار تظهر فقط إذا لم نكن نبحث (لتوفير المساحة)
+              if (!_isSearching) ...[
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, color: Colors.white),
+                  onSelected: (value) => _handleMenuSelection(value),
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(value: 'import', child: Row(children: [Icon(Icons.upload_file, color: Colors.teal), SizedBox(width: 10), Text("استيراد Excel")])),
+                    const PopupMenuItem(value: 'pdf', child: Row(children: [Icon(Icons.picture_as_pdf, color: Colors.red), SizedBox(width: 10), Text("تصدير PDF")])),
+                    const PopupMenuItem(value: 'excel', child: Row(children: [Icon(Icons.table_chart, color: Colors.green), SizedBox(width: 10), Text("تصدير Excel")])),
+                  ],
+                ),
+              ]
             ],
           ),
 
-          // ... داخل actions في AppBar
-          IconButton(
-            icon: const Icon(Icons.search),
-            tooltip: 'بحث في المعاملات',
-            onPressed: () async {
-              // 1. جلب قائمة المعاملات الحالية
-              final transactions = await ref.read(transactionsProvider(widget.person.id!).future);
-
-              if (transactions.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد معاملات للبحث')));
-                return;
-              }
-
-              // 2. فتح نافذة البحث
-              showSearch(
-                context: context,
-                delegate: TransactionSearchDelegate(
-                    transactions: transactions,
-                    // تمرير دوال التعديل والحذف ليعملوا من داخل البحث أيضاً
-                    onEdit: (t) => _showAddOrEditTransactionDialog(transaction: t),
-                    onDelete: (t) async {
-                      await ref.read(databaseHelperProvider).deleteTransaction(t.id!);
-                      _refreshAllData();
-                    }
-                ),
-              );
-            },
-          ),
-// ... باقي الأزرار
-        ],
-      ),
-      body: Column(
-        children: [
-          // --- 1. هيدر الحساب الذي يعرض الأرصدة وأزرار التبديل ---
-          AccountHeader(
-            personId: widget.person.id!,
-            selectedCurrency: _selectedCurrency,
-            onCurrencySelected: (currency) {
-              setState(() {
-                _selectedCurrency = currency;
-              });
-            },
-          ),
-
-          // --- 2. عنوان قسم المعاملات ---
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Text(
-                  'سجل المعاملات ($_selectedCurrency)',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Theme.of(context).textTheme.bodySmall?.color
+          // 2. الفلتر والعملة (يختفي عند البحث لإعطاء مساحة، أو يظل حسب رغبتك)
+          SliverToBoxAdapter(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 5, offset: Offset(0, 2))],
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(color: AppColors.darkGrey, borderRadius: BorderRadius.circular(10)), // خلفية أغمق قليلاً
+                    child: Row(
+                      children: [
+                        Expanded(child: _buildCurrencyTab("السعودي (SAR)", "SAR")),
+                        Expanded(child: _buildCurrencyTab("اليمني (YER)", "YER")),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      // لون أغمق للنص (Dark Blue/Grey) بدلاً من الرمادي الباهت
+                      const Text("سجل المعاملات", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.primary)),
+                      const Spacer(),
+                      InkWell(
+                        onTap: _pickDateRange,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            // خلفية مميزة عند التفعيل
+                            color: _startDate != null ? AppColors.primary : AppColors.lightGrey, 
+                            borderRadius: BorderRadius.circular(20), 
+                            border: Border.all(color: Colors.grey.shade300)
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.calendar_today, size: 16, color: _startDate != null ? Colors.white : Colors.grey[700]),
+                              const SizedBox(width: 8),
+                              Text(
+                                _startDate != null ? '${DateFormat('MM/dd').format(_startDate!)} - ${DateFormat('MM/dd').format(_endDate!)}' : "تصفية بالتاريخ", 
+                                style: TextStyle(
+                                  color: _startDate != null ? Colors.white : Colors.grey[800], // نص أبيض عند التفعيل، أسود رمادي عند عدمه
+                                  fontSize: 12, 
+                                  fontWeight: FontWeight.bold
+                                )
+                              ),
+                              if (_startDate != null) ...[
+                                const SizedBox(width: 8), 
+                                InkWell(
+                                  onTap: _clearDateFilter, 
+                                  child: const Icon(Icons.close, size: 16, color: Colors.white)
+                                )
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
 
-          // --- 3. قائمة المعاملات التي تتغير بناءً على العملة المختارة ---
-          Expanded(
-            child: TransactionsList(
-              key: ValueKey(_selectedCurrency), // مهم للتبديل السلس
-              personId: widget.person.id!,
-              currency: _selectedCurrency,
-              onDataChanged: _refreshAllData,
-              onEdit: (transaction) => _showAddOrEditTransactionDialog(transaction: transaction),
-            ),
+          // 3. القائمة (تم تمرير نص البحث لها)
+          TransactionsSliverList(
+            key: ValueKey('$_selectedCurrency-$_startDate-$_searchQuery'), // تحديث عند تغير البحث
+            personId: widget.person.id!,
+            currency: _selectedCurrency,
+            startDate: _startDate,
+            endDate: _endDate,
+            searchQuery: _searchQuery, // تمرير كلمة البحث
+            onDataChanged: _refreshAllData,
+            onEdit: (t) => _showAddOrEditTransactionDialog(transaction: t),
           ),
+
+          const SliverToBoxAdapter(child: SizedBox(height: 80)),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddOrEditTransactionDialog(),
-        label: const Text('معاملة جديدة'),
-        icon: const Icon(Icons.add),
+        backgroundColor: AppColors.primary,
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text('معاملة جديدة', style: TextStyle(color: Colors.white)),
       ),
     );
   }
 
-  // --- دالة موحدة وكاملة لإضافة وتعديل المعاملات ---
+  Widget _buildCurrencyTab(String label, String currency) {
+    bool isSelected = _selectedCurrency == currency;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedCurrency = currency),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: isSelected ? [const BoxShadow(color: Colors.black12, blurRadius: 4)] : [],
+        ),
+        alignment: Alignment.center,
+        child: Text(label, style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? AppColors.primary : AppColors.grey700)),
+      ),
+    );
+  }
+
+  void _handleMenuSelection(String value) async {
+    if (value == 'import') {
+      ImportService().importExcel(context, ref, widget.person.id!, _selectedCurrency);
+    } else {
+      final transactions = await ref.read(transactionsProvider(widget.person.id!).future);
+      if (transactions.isEmpty) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد بيانات'))); return; }
+      String path = "";
+      if (value == 'pdf') path = await ExportService().exportToPdf(widget.person, transactions);
+      else path = await ExportService().exportToExcel(widget.person, transactions);
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم الحفظ: $path'), backgroundColor: Colors.green));
+    }
+  }
+
+  // --- نافذة الإضافة/التعديل (مع التاريخ والصورة) ---
   void _showAddOrEditTransactionDialog({Transaction? transaction}) {
     final isEditing = transaction != null;
     final formKey = GlobalKey<FormState>();
@@ -178,279 +298,386 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
     final descriptionController = TextEditingController(text: isEditing ? transaction.description : '');
     String transactionType = isEditing ? transaction.type : 'مصروف';
     String currency = isEditing ? transaction.currency : _selectedCurrency;
+    String? selectedImagePath = isEditing ? transaction.imagePath : null;
+
+    // متغير لتخزين التاريخ المختار (الافتراضي هو تاريخ المعاملة أو اليوم)
+    DateTime selectedDate = isEditing
+        ? DateTime.parse(transaction.date)
+        : DateTime.now();
 
     showDialog(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: Text(isEditing ? 'تعديل معاملة' : 'إضافة معاملة'),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: amountController,
-                    decoration: const InputDecoration(labelText: 'المبلغ', border: OutlineInputBorder()),
-                    keyboardType: TextInputType.number,
-                    validator: (v) => v == null || v.isEmpty || double.tryParse(v) == null ? 'مبلغ غير صحيح' : null,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: descriptionController,
-                    decoration: const InputDecoration(labelText: 'الوصف', border: OutlineInputBorder()),
-                    validator: (v) => v == null || v.isEmpty ? 'الوصف مطلوب' : null,
-                  ),
-                  const SizedBox(height: 16),
-                  StatefulBuilder(
-                    builder: (BuildContext context, StateSetter setState) {
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              value: transactionType,
-                              decoration: const InputDecoration(labelText: 'النوع', border: OutlineInputBorder()),
-                              items: ['مصروف', 'إيراد'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                              onChanged: (v) => setState(() => transactionType = v!),
+        return StatefulBuilder(
+            builder: (context, setStateDialog) {
+              return AlertDialog(
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                title: Text(isEditing ? 'تعديل معاملة' : 'إضافة معاملة'),
+                content: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // حقل المبلغ
+                        TextFormField(
+                          controller: amountController,
+                          decoration: const InputDecoration(labelText: 'المبلغ', border: OutlineInputBorder()),
+                          keyboardType: TextInputType.number,
+                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                        ),
+                        const SizedBox(height: 10),
+
+                        // حقل الوصف
+                        TextFormField(
+                          controller: descriptionController,
+                          decoration: const InputDecoration(labelText: 'الوصف', border: OutlineInputBorder()),
+                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                        ),
+                        const SizedBox(height: 10),
+
+                        // اختيار التاريخ (الجديد)
+                        InkWell(
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: selectedDate,
+                              firstDate: DateTime(2000),
+                              lastDate: DateTime(2100),
+                              builder: (context, child) {
+                                return Theme(
+                                  data: ThemeData.light().copyWith(
+                                    colorScheme: const ColorScheme.light(primary: AppColors.primary),
+                                  ),
+                                  child: child!,
+                                );
+                              },
+                            );
+                            if (picked != null) {
+                              setStateDialog(() => selectedDate = picked);
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.calendar_today, color: Colors.blue),
+                                const SizedBox(width: 10),
+                                Text(
+                                  "التاريخ: ${DateFormat('yyyy-MM-dd').format(selectedDate)}",
+                                  style: const TextStyle(fontSize: 16),
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              value: currency,
-                              decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()),
-                              items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                              onChanged: (v) => setState(() => currency = v!),
+                        ),
+                        const SizedBox(height: 10),
+
+                        // العملة والنوع
+                        Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: transactionType,
+                                decoration: const InputDecoration(labelText: 'النوع', border: OutlineInputBorder()),
+                                items: ['مصروف', 'إيراد'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                                onChanged: (v) => setStateDialog(() => transactionType = v!),
+                              ),
                             ),
-                          ),
-                        ],
-                      );
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: currency,
+                                decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()),
+                                items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                                onChanged: (v) => setStateDialog(() => currency = v!),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 15),
+
+                        // زر الصورة
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.camera_alt, color: selectedImagePath != null ? Colors.green : Colors.grey),
+                              onPressed: () async {
+                                final ImagePicker picker = ImagePicker();
+                                final XFile? image = await picker.pickImage(source: ImageSource.camera);
+                                if (image != null) {
+                                  setStateDialog(() => selectedImagePath = image.path);
+                                }
+                              },
+                            ),
+                            Text(selectedImagePath != null ? 'تم إرفاق صورة' : 'صورة الفاتورة (اختياري)'),
+                            if (selectedImagePath != null)
+                              IconButton(
+                                icon: const Icon(Icons.close, color: Colors.red),
+                                onPressed: () => setStateDialog(() => selectedImagePath = null),
+                              )
+                          ],
+                        )
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(child: const Text('إلغاء'), onPressed: () => Navigator.of(ctx).pop()),
+                  FilledButton(
+                    child: Text(isEditing ? 'حفظ' : 'إضافة'),
+                    onPressed: () async {
+                      if (formKey.currentState!.validate()) {
+                        final dbHelper = ref.read(databaseHelperProvider);
+                        final newTx = Transaction(
+                          id: isEditing ? transaction.id : null,
+                          personId: widget.person.id!,
+                          type: transactionType,
+                          amount: double.parse(amountController.text),
+                          description: descriptionController.text,
+                          // استخدام التاريخ المختار بدلاً من DateTime.now()
+                          date: selectedDate.toIso8601String(),
+                          currency: currency,
+                          imagePath: selectedImagePath,
+                        );
+
+                        if (isEditing) {
+                          await dbHelper.updateTransaction(newTx);
+                        } else {
+                          await dbHelper.addTransaction(newTx);
+                        }
+
+                        _refreshAllData();
+                        Navigator.of(ctx).pop();
+                      }
                     },
                   ),
                 ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(child: const Text('إلغاء'), onPressed: () => Navigator.of(ctx).pop()),
-            FilledButton(
-              child: Text(isEditing ? 'حفظ التعديل' : 'إضافة'),
-              onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  final dbHelper = ref.read(databaseHelperProvider);
-                  if (isEditing) {
-                    final updatedTransaction = transaction.copyWith(
-                      type: transactionType,
-                      amount: double.parse(amountController.text),
-                      description: descriptionController.text,
-                      currency: currency,
-                    );
-                    await dbHelper.updateTransaction(updatedTransaction);
-                  } else {
-                    final newTransaction = Transaction(
-                      personId: widget.person.id!,
-                      type: transactionType,
-                      amount: double.parse(amountController.text),
-                      description: descriptionController.text,
-                      date: DateTime.now().toIso8601String(),
-                      currency: currency,
-                    );
-                    await dbHelper.addTransaction(newTransaction);
-                  }
-
-                  _refreshAllData();
-                  Navigator.of(ctx).pop();
-                }
-              },
-            ),
-          ],
+              );
+            }
         );
       },
     );
-  }
-}
+  }}
 
-// --- ويدجت هيدر الحساب (منفصل ومنظم) ---
-class AccountHeader extends ConsumerWidget {
+// --- 1. ويدجت الرصيد (المطور والذكي) ---
+// --- 1. ويدجت الرصيد (المطور والذكي) ---
+class UserBalanceHeader extends ConsumerWidget {
   final int personId;
-  final String selectedCurrency;
-  final ValueChanged<String> onCurrencySelected;
+  final String currency;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final String searchQuery; // <-- المتغير الجديد
 
-  const AccountHeader({
-    super.key,
-    required this.personId,
-    required this.selectedCurrency,
-    required this.onCurrencySelected,
+  const UserBalanceHeader({
+    super.key, 
+    required this.personId, 
+    required this.currency,
+    this.startDate,
+    this.endDate,
+    this.searchQuery = "", // <-- قيمة افتراضية فارغة
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(child: BalanceCard(personId: personId, currency: 'SAR')),
-              const SizedBox(width: 12),
-              Expanded(child: BalanceCard(personId: personId, currency: 'YER')),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'SAR', label: Text('السعودي'), icon: Icon(Icons.attach_money)),
-              ButtonSegment(value: 'YER', label: Text('اليمني'), icon: Icon(Icons.money)),
-            ],
-            selected: {selectedCurrency},
-            onSelectionChanged: (newSelection) {
-              onCurrencySelected(newSelection.first);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// --- بطاقة عرض الرصيد ---
-class BalanceCard extends ConsumerWidget {
-  final int personId;
-  final String currency;
-  const BalanceCard({super.key, required this.personId, required this.currency});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final balanceAsync = ref.watch(balanceProvider(BalanceParams(personId: personId, currency: currency)));
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: balanceAsync.when(
-          data: (balance) {
-            final color = balance >= 0 ? Colors.green : Colors.red;
-            return Column(
-              children: [
-                Text(
-                  currency == 'SAR' ? 'الرصيد السعودي' : 'الرصيد اليمني',
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  balance.toStringAsFixed(2),
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-              ],
-            );
-          },
-          loading: () => const Center(child: SizedBox(height: 50, child: CircularProgressIndicator())),
-          error: (_, __) => const Text('خطأ'),
-        ),
-      ),
-    );
-  }
-}
-
-// --- قائمة عرض المعاملات ---
-class TransactionsList extends ConsumerWidget {
-  final int personId;
-  final String currency;
-  final VoidCallback onDataChanged;
-  final Function(Transaction) onEdit;
-
-  const TransactionsList({super.key, required this.personId, required this.currency, required this.onDataChanged, required this.onEdit});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
+    // نراقب جميع المعاملات لهذا الشخص
     final transactionsAsync = ref.watch(transactionsProvider(personId));
 
     return transactionsAsync.when(
       data: (transactions) {
-        final filteredTransactions = transactions.where((t) => t.currency == currency).toList();
+        // --- 1. فلترة حسب العملة ---
+        var filtered = transactions.where((t) => t.currency == currency);
 
-        if (filteredTransactions.isEmpty) {
-          return Center(child: Text('لا توجد معاملات بعملة $currency'));
+        // --- 2. فلترة حسب التاريخ (إذا وجد) ---
+        if (startDate != null && endDate != null) {
+          filtered = filtered.where((t) {
+            final tDate = DateTime.parse(t.date);
+            return tDate.isAfter(startDate!.subtract(const Duration(days: 1))) && 
+                   tDate.isBefore(endDate!.add(const Duration(days: 1)));
+          });
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
-          itemCount: filteredTransactions.length,
-          itemBuilder: (context, index) {
-            final transaction = filteredTransactions[index];
-            return TransactionTile(
-              transaction: transaction,
-              onEdit: () => onEdit(transaction),
-              onDelete: () async {
-                await ref.read(databaseHelperProvider).deleteTransaction(transaction.id!);
-                onDataChanged();
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${transaction.description} تم الحذف')));
-              },
-            );
-          },
+        // --- 3. فلترة حسب البحث (الجديد) ---
+        if (searchQuery.isNotEmpty) {
+          filtered = filtered.where((t) {
+            final descMatch = t.description.toLowerCase().contains(searchQuery.toLowerCase());
+            final amountMatch = t.amount.toString().contains(searchQuery);
+            return descMatch || amountMatch;
+          });
+        }
+
+        // --- 4. حساب المجموع للنتائج المفلترة ---
+        double balance = 0.0;
+        for (var t in filtered) {
+          if (t.type == 'إيراد') {
+            balance += t.amount;
+          } else {
+            balance -= t.amount;
+          }
+        }
+
+        // عرض النتيجة
+        return Column(
+          children: [
+            Text(
+              balance.toStringAsFixed(2),
+              style: TextStyle(
+                fontSize: 34,
+                fontWeight: FontWeight.bold,
+                color: balance >= 0 ? AppColors.greenAccent : AppColors.redAccent,
+                shadows: const [Shadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4))]
+              ),
+            ),
+            Text(
+              currency == 'SAR' ? 'ريال سعودي' : 'ريال يمني',
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            // عرض تنبيه صغير إذا كان هناك فلترة نشطة
+            if (startDate != null || searchQuery.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Text(
+                  searchQuery.isNotEmpty ? "(نتائج البحث)" : "(رصيد الفترة المحددة)",
+                  style: const TextStyle(color: Colors.yellowAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              )
+          ],
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => const Center(child: Text('خطأ في تحميل المعاملات')),
+      loading: () => const CircularProgressIndicator(color: Colors.white),
+      error: (_, __) => const Text("!", style: TextStyle(color: Colors.white)),
     );
   }
 }
 
-// --- عنصر المعاملة في القائمة ---
-class TransactionTile extends StatelessWidget {
+// --- قائمة المعاملات (تم تحديثها لدعم البحث المباشر) ---
+class TransactionsSliverList extends ConsumerWidget {
+  final int personId;
+  final String currency;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final String searchQuery; // متغير البحث
+  final VoidCallback onDataChanged;
+  final Function(Transaction) onEdit;
+
+  const TransactionsSliverList({
+    super.key,
+    required this.personId,
+    required this.currency,
+    this.startDate,
+    this.endDate,
+    this.searchQuery = "", // قيمة افتراضية
+    required this.onDataChanged,
+    required this.onEdit
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final transactionsAsync = ref.watch(transactionsProvider(personId));
+    return transactionsAsync.when(
+      data: (transactions) {
+        // 1. فلترة العملة
+        var filtered = transactions.where((t) => t.currency == currency);
+
+        // 2. فلترة التاريخ
+        if (startDate != null && endDate != null) {
+          filtered = filtered.where((t) {
+            final tDate = DateTime.parse(t.date);
+            return tDate.isAfter(startDate!.subtract(const Duration(days: 1))) && tDate.isBefore(endDate!.add(const Duration(days: 1)));
+          });
+        }
+
+        // 3. فلترة البحث (الجديد)
+        if (searchQuery.isNotEmpty) {
+          filtered = filtered.where((t) {
+            final descMatch = t.description.toLowerCase().contains(searchQuery.toLowerCase());
+            final amountMatch = t.amount.toString().contains(searchQuery);
+            return descMatch || amountMatch;
+          });
+        }
+
+        final list = filtered.toList();
+
+        if (list.isEmpty) {
+          return SliverFillRemaining(child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.receipt_long, size: 60, color: Colors.grey), const SizedBox(height: 10), Text("لا توجد معاملات", style: TextStyle(color: Colors.grey))])));
+        }
+
+        return SliverList(
+          delegate: SliverChildBuilderDelegate(
+                (context, index) => ModernTransactionCard(
+                transaction: list[index],
+                onEdit: () => onEdit(list[index]),
+                onDelete: () async {
+                  await ref.read(databaseHelperProvider).deleteTransaction(list[index].id!);
+                  onDataChanged();
+                }
+            ),
+            childCount: list.length,
+          ),
+        );
+      },
+      loading: () => const SliverFillRemaining(child: Center(child: CircularProgressIndicator())),
+      error: (_, __) => const SliverFillRemaining(child: Center(child: Text('خطأ'))),
+    );
+  }
+}
+
+// --- بطاقة المعاملة الحديثة ---
+class ModernTransactionCard extends StatelessWidget {
   final Transaction transaction;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
-  const TransactionTile({super.key, required this.transaction, required this.onEdit, required this.onDelete});
+  const ModernTransactionCard({super.key, required this.transaction, required this.onEdit, required this.onDelete});
+
+  void _shareWhatsApp() async {
+    final text = "عملية: ${transaction.description}\nالمبلغ: ${transaction.amount} ${transaction.currency}\nالتاريخ: ${transaction.date.split('T')[0]}";
+    final url = Uri.parse("whatsapp://send?text=${Uri.encodeComponent(text)}");
+    if (await canLaunchUrl(url)) await launchUrl(url);
+  }
+
+  void _showImage(BuildContext context) {
+    if (transaction.imagePath != null && File(transaction.imagePath!).existsSync()) showDialog(context: context, builder: (_) => Dialog(child: Image.file(File(transaction.imagePath!))));
+  }
 
   @override
   Widget build(BuildContext context) {
     final isIncome = transaction.type == 'إيراد';
-    final color = isIncome ? Colors.green : Colors.red;
+    final color = isIncome ? AppColors.green : AppColors.red;
+    final hasImage = transaction.imagePath != null;
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 5, offset: const Offset(0, 2))]),
       child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.1),
-          child: Icon(isIncome ? Icons.arrow_downward : Icons.arrow_upward, color: color),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: GestureDetector(
+          onTap: hasImage ? () => _showImage(context) : null,
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+            child: hasImage ? const Icon(Icons.camera_alt, color: Colors.blue, size: 20) : Icon(isIncome ? Icons.arrow_downward : Icons.arrow_upward, color: color, size: 20),
+          ),
         ),
-        title: Text(transaction.description, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(DateFormat('yyyy-MM-dd').format(DateTime.parse(transaction.date))),
+        title: Text(transaction.description, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16,color: Colors.black)),
+        subtitle: Text(DateFormat('yyyy-MM-dd').format(DateTime.parse(transaction.date)), style: TextStyle(color: Colors.grey[700], fontSize: 12)),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              transaction.amount.toStringAsFixed(2),
-              style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
-            ),
+            Text(transaction.amount.toStringAsFixed(0), style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(width: 8),
+            // IconButton(icon: const Icon(Icons.share, size: 20, color: Colors.green), onPressed: _shareWhatsApp),
             PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'edit') {
-                  onEdit();
-                } else if (value == 'delete') {
-                  onDelete();
-                }
-              },
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem<String>(
-                  value: 'edit',
-                  child: ListTile(leading: Icon(Icons.edit_outlined), title: Text('تعديل')),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'delete',
-                  child: ListTile(leading: Icon(Icons.delete_outline), title: Text('حذف')),
-                ),
+              icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[400]),
+              onSelected: (v) => v == 'edit' ? onEdit() : onDelete(),
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'edit', child: Text('تعديل')),
+                const PopupMenuItem(value: 'delete', child: Text('حذف')),
               ],
             ),
           ],

@@ -6,6 +6,8 @@ class Transaction {
   final String description;
   final String date;
   final String currency;
+  final String? imagePath;
+  final String? transferId; // <-- الحقل الجديد لربط الحوالات
 
   Transaction({
     this.id,
@@ -15,29 +17,11 @@ class Transaction {
     required this.description,
     required this.date,
     required this.currency,
+    this.imagePath,
+    this.transferId, // <-- أضفه هنا
   });
 
-  // --- دالة جديدة ---
-  Transaction copyWith({
-    int? id,
-    int? personId,
-    String? type,
-    double? amount,
-    String? description,
-    String? date,
-    String? currency,
-  }) {
-    return Transaction(
-      id: id ?? this.id,
-      personId: personId ?? this.personId,
-      type: type ?? this.type,
-      amount: amount ?? this.amount,
-      description: description ?? this.description,
-      date: date ?? this.date,
-      currency: currency ?? this.currency,
-    );
-  }
-
+  // تحديث toMap
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -47,9 +31,12 @@ class Transaction {
       'description': description,
       'date': date,
       'currency': currency,
+      'imagePath': imagePath,
+      'transferId': transferId, // <-- أضفه هنا
     };
   }
 
+  // تحديث fromMap
   factory Transaction.fromMap(Map<String, dynamic> map) {
     return Transaction(
       id: map['id'],
@@ -59,6 +46,33 @@ class Transaction {
       description: map['description'],
       date: map['date'],
       currency: map['currency'],
+      imagePath: map['imagePath'],
+      transferId: map['transferId'], // <-- أضفه هنا
+    );
+  }
+
+  // تحديث copyWith
+  Transaction copyWith({
+    int? id,
+    int? personId,
+    String? type,
+    double? amount,
+    String? description,
+    String? date,
+    String? currency,
+    String? imagePath,
+    String? transferId, // <-- أضفه هنا
+  }) {
+    return Transaction(
+      id: id ?? this.id,
+      personId: personId ?? this.personId,
+      type: type ?? this.type,
+      amount: amount ?? this.amount,
+      description: description ?? this.description,
+      date: date ?? this.date,
+      currency: currency ?? this.currency,
+      imagePath: imagePath ?? this.imagePath,
+      transferId: transferId ?? this.transferId, // <-- أضفه هنا
     );
   }
 }

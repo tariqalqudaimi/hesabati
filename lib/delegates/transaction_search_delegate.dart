@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import '../models/transaction_model.dart';
-import '../screens/user_account_screen.dart'; // لاستدعاء TransactionTile
+import '../screens/home_screen.dart';
+import '../screens/user_account_screen.dart'; // ضروري لاستخدام ModernTransactionCard
+import '../constants/app_colors.dart';
 
 class TransactionSearchDelegate extends SearchDelegate {
   final List<Transaction> transactions;
+  // التصحيح: تحديد نوع الدالة بدقة
   final Function(Transaction) onEdit;
   final Function(Transaction) onDelete;
 
@@ -14,10 +17,26 @@ class TransactionSearchDelegate extends SearchDelegate {
   });
 
   @override
+  ThemeData appBarTheme(BuildContext context) {
+    return ThemeData(
+      appBarTheme: const AppBarTheme(
+        backgroundColor: AppColors.primary,
+        iconTheme: IconThemeData(color: Colors.white),
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        hintStyle: TextStyle(color: Colors.white60),
+        border: InputBorder.none,
+      ),
+      textTheme: const TextTheme(
+        titleLarge: TextStyle(color: Colors.white, fontSize: 18),
+      ),
+      scaffoldBackgroundColor: AppColors.background,
+    );
+  }
+
+  @override
   List<Widget>? buildActions(BuildContext context) {
-    return [
-      IconButton(icon: const Icon(Icons.clear), onPressed: () => query = ''),
-    ];
+    return [IconButton(icon: const Icon(Icons.clear), onPressed: () => query = '')];
   }
 
   @override
@@ -26,25 +45,21 @@ class TransactionSearchDelegate extends SearchDelegate {
   }
 
   @override
-  Widget buildResults(BuildContext context) {
-    return _buildList(context);
-  }
+  Widget buildResults(BuildContext context) => _buildList(context);
 
   @override
-  Widget buildSuggestions(BuildContext context) {
-    return _buildList(context);
-  }
+  Widget buildSuggestions(BuildContext context) => _buildList(context);
 
   Widget _buildList(BuildContext context) {
-    // منطق البحث: نبحث في الوصف أو المبلغ
     final results = transactions.where((t) {
       final descriptionMatch = t.description.toLowerCase().contains(query.toLowerCase());
       final amountMatch = t.amount.toString().contains(query);
-      return descriptionMatch || amountMatch;
+      final dateMatch = t.date.contains(query);
+      return descriptionMatch || amountMatch || dateMatch;
     }).toList();
 
     if (results.isEmpty) {
-      return const Center(child: Text('لا توجد نتائج مطابقة'));
+      return const Center(child: Text('لا توجد نتائج', style: TextStyle(color: Colors.grey)));
     }
 
     return ListView.builder(
@@ -52,16 +67,17 @@ class TransactionSearchDelegate extends SearchDelegate {
       itemCount: results.length,
       itemBuilder: (context, index) {
         final transaction = results[index];
-        // نعيد استخدام نفس تصميم العنصر الموجود في شاشة الحساب
-        return TransactionTile(
+        // استخدام البطاقة الحديثة
+        return ModernTransactionCard(
           transaction: transaction,
+          // التصحيح: نمرر دالة فارغة تستدعي الدالة الرئيسية مع المعاملة
           onEdit: () {
             close(context, null); // إغلاق البحث
             onEdit(transaction); // فتح التعديل
           },
-          onDelete: () async {
+          onDelete: () {
             close(context, null); // إغلاق البحث
-            onDelete(transaction); // تنفيذ الحذف
+            onDelete(transaction); // الحذف
           },
         );
       },

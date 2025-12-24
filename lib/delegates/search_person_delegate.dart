@@ -1,17 +1,36 @@
 import 'package:flutter/material.dart';
 import '../models/person_model.dart';
-import '../screens/user_account_screen.dart'; // تأكد من المسار الصحيح
+import '../screens/user_account_screen.dart';
+import '../screens/home_screen.dart'; // لاستخدام ModernPersonCard
+import '../constants/app_colors.dart';
 
 class PersonSearchDelegate extends SearchDelegate {
   final List<Person> persons;
 
   PersonSearchDelegate(this.persons);
 
+  // تخصيص ثيم البحث ليطابق التطبيق
+  @override
+  ThemeData appBarTheme(BuildContext context) {
+    return ThemeData(
+      appBarTheme: const AppBarTheme(
+        backgroundColor: AppColors.primary, // نفس لون الهيدر
+        iconTheme: IconThemeData(color: Colors.white),
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        hintStyle: TextStyle(color: Colors.white60),
+        border: InputBorder.none,
+      ),
+      textTheme: const TextTheme(
+        titleLarge: TextStyle(color: Colors.white, fontSize: 18),
+      ),
+      scaffoldBackgroundColor: AppColors.background, // لون الخلفية الهادئ
+    );
+  }
+
   @override
   List<Widget>? buildActions(BuildContext context) {
-    return [
-      IconButton(icon: const Icon(Icons.clear), onPressed: () => query = ''),
-    ];
+    return [IconButton(icon: const Icon(Icons.clear), onPressed: () => query = '')];
   }
 
   @override
@@ -20,37 +39,24 @@ class PersonSearchDelegate extends SearchDelegate {
   }
 
   @override
-  Widget buildResults(BuildContext context) {
-    return _buildList(context);
-  }
+  Widget buildResults(BuildContext context) => _buildList(context);
 
   @override
-  Widget buildSuggestions(BuildContext context) {
-    return _buildList(context);
-  }
+  Widget buildSuggestions(BuildContext context) => _buildList(context);
 
   Widget _buildList(BuildContext context) {
     final results = persons.where((p) => p.name.toLowerCase().contains(query.toLowerCase())).toList();
 
     if (results.isEmpty) {
-      return const Center(child: Text('لا توجد نتائج'));
+      return const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.search_off, size: 60, color: Colors.grey), SizedBox(height: 10), Text('لا توجد نتائج', style: TextStyle(color: Colors.grey))]));
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.all(16),
       itemCount: results.length,
       itemBuilder: (context, index) {
-        final person = results[index];
-        return ListTile(
-          leading: CircleAvatar(child: Text(person.name[0])),
-          title: Text(person.name),
-          onTap: () {
-            // الانتقال لصفحة الشخص عند الضغط
-            Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => UserAccountScreen(person: person))
-            );
-          },
-        );
+        // نستخدم نفس البطاقة الحديثة الموجودة في الهوم
+        return ModernPersonCard(person: results[index], showBalances: false,);
       },
     );
   }
