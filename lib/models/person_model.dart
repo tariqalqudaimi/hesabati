@@ -1,14 +1,16 @@
 class Person {
   final int? id;
   final String name;
+  final String? phone;
 
-  Person({this.id, required this.name});
+  Person({this.id, required this.name, this.phone});
 
   // لتحويل بيانات الكلاس إلى Map لإدخالها في قاعدة البيانات
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'name': name,
+      'phone': phone,
     };
   }
 }

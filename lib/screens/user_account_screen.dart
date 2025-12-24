@@ -4,14 +4,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../constants/app_colors.dart';
 import '../models/person_model.dart';
 import '../models/transaction_model.dart';
+import '../models/wallet_model.dart'; // مودل المحفظة
 import '../providers/database_providers.dart';
 import '../services/database_helper.dart';
 import '../services/export_service.dart';
 import '../services/import_service.dart';
-import '../constants/app_colors.dart';
-// لم نعد بحاجة لملف delegate هنا
+import '../services/messaging_service.dart'; // خدمة الرسائل
+import 'wallets_screen.dart'; // للوصول لـ walletsProvider
+import '../models/wallet_model.dart';
+import '../services/messaging_service.dart';
 
 class UserAccountScreen extends ConsumerStatefulWidget {
   final Person person;
@@ -25,18 +29,19 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
   String _selectedCurrency = 'SAR';
   DateTime? _startDate;
   DateTime? _endDate;
-
-  // --- متغيرات البحث الجديد ---
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
 
   void _refreshAllData() {
     ref.invalidate(transactionsProvider(widget.person.id!));
-    // تحديث الإجماليات العامة أيضاً
-    ref.invalidate(personsProvider); 
+    ref.invalidate(balanceProvider(BalanceParams(personId: widget.person.id!, currency: 'SAR')));
+    ref.invalidate(balanceProvider(BalanceParams(personId: widget.person.id!, currency: 'YER')));
+    ref.invalidate(personsProvider);
     ref.invalidate(totalBalanceProvider('SAR'));
     ref.invalidate(totalBalanceProvider('YER'));
+    ref.invalidate(walletsProvider);
+    ref.invalidate(walletBalanceProvider);
   }
 
   Future<void> _pickDateRange() async {
@@ -49,87 +54,54 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
           : null,
       builder: (context, child) {
         return Theme(
-          data: ThemeData.light().copyWith(
-            colorScheme: const ColorScheme.light(primary: AppColors.primary),
-          ),
+          data: ThemeData.light().copyWith(colorScheme: const ColorScheme.light(primary: Color(0xFF2C3E50))),
           child: child!,
         );
       },
     );
     if (picked != null) {
-      setState(() {
-        _startDate = picked.start;
-        _endDate = picked.end;
-      });
+      setState(() { _startDate = picked.start; _endDate = picked.end; });
     }
   }
 
   void _clearDateFilter() {
-    setState(() {
-      _startDate = null;
-      _endDate = null;
-    });
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
+    setState(() { _startDate = null; _endDate = null; });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: const Color(0xFFF5F7FA),
       body: CustomScrollView(
         slivers: [
-          // 1. الشريط العلوي (تم دمج البحث فيه)
           SliverAppBar(
-            expandedHeight: 220.0, // زيادة الارتفاع قليلاً
+            expandedHeight: 200.0,
             pinned: true,
-            backgroundColor: AppColors.primary,
-            // العنوان: إما اسم الشخص أو حقل البحث
+            backgroundColor: const Color(0xFF2C3E50),
             title: _isSearching
                 ? TextField(
               controller: _searchController,
               autofocus: true,
               style: const TextStyle(color: Colors.white, fontSize: 18),
               cursorColor: Colors.white,
-              decoration: const InputDecoration(
-                hintText: 'ابحث في المعاملات...',
-                hintStyle: TextStyle(color: Colors.white60),
-                border: InputBorder.none,
-              ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
+              decoration: const InputDecoration(hintText: 'ابحث...', hintStyle: TextStyle(color: Colors.white60), border: InputBorder.none),
+              onChanged: (value) => setState(() => _searchQuery = value),
             )
-                : Text(widget.person.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                : Text(widget.person.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             centerTitle: true,
-
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
                 decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [AppColors.primary, AppColors.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+                  gradient: LinearGradient(colors: [Color(0xFF2C3E50), Color(0xFF4CA1AF)], begin: Alignment.topLeft, end: Alignment.bottomRight),
                 ),
                 child: SafeArea(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const SizedBox(height: 40), // مسافة لعدم تغطية العنوان
-                      // نمرر تواريخ الفلترة للهيدر ليحسب الرصيد بناءً عليها
+                      const SizedBox(height: 40),
                       UserBalanceHeader(
-                        personId: widget.person.id!, 
-                        currency: _selectedCurrency,
-                        startDate: _startDate,
-                        endDate: _endDate,
-                        searchQuery: _searchQuery,
+                        personId: widget.person.id!, currency: _selectedCurrency,
+                        startDate: _startDate, endDate: _endDate, searchQuery: _searchQuery,
                       ),
                     ],
                   ),
@@ -137,52 +109,36 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
               ),
             ),
             actions: [
-              // زر تفعيل/إلغاء البحث
               IconButton(
                 icon: Icon(_isSearching ? Icons.close : Icons.search, color: Colors.white),
                 onPressed: () {
                   setState(() {
-                    if (_isSearching) {
-                      // عند الإغلاق: نظف البحث وأخف الحقل
-                      _isSearching = false;
-                      _searchQuery = "";
-                      _searchController.clear();
-                    } else {
-                      // عند الفتح
-                      _isSearching = true;
-                    }
+                    if (_isSearching) { _isSearching = false; _searchQuery = ""; _searchController.clear(); }
+                    else { _isSearching = true; }
                   });
                 },
               ),
-
-              // باقي الأزرار تظهر فقط إذا لم نكن نبحث (لتوفير المساحة)
-              if (!_isSearching) ...[
+              if (!_isSearching)
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, color: Colors.white),
                   onSelected: (value) => _handleMenuSelection(value),
-                  itemBuilder: (context) => [
+                  itemBuilder: (_) => [
                     const PopupMenuItem(value: 'import', child: Row(children: [Icon(Icons.upload_file, color: Colors.teal), SizedBox(width: 10), Text("استيراد Excel")])),
                     const PopupMenuItem(value: 'pdf', child: Row(children: [Icon(Icons.picture_as_pdf, color: Colors.red), SizedBox(width: 10), Text("تصدير PDF")])),
                     const PopupMenuItem(value: 'excel', child: Row(children: [Icon(Icons.table_chart, color: Colors.green), SizedBox(width: 10), Text("تصدير Excel")])),
                   ],
                 ),
-              ]
             ],
           ),
 
-          // 2. الفلتر والعملة (يختفي عند البحث لإعطاء مساحة، أو يظل حسب رغبتك)
           SliverToBoxAdapter(
             child: Container(
               padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
-                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 5, offset: Offset(0, 2))],
-              ),
+              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)), boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 5, offset: Offset(0, 2))]),
               child: Column(
                 children: [
                   Container(
-                    decoration: BoxDecoration(color: AppColors.darkGrey, borderRadius: BorderRadius.circular(10)), // خلفية أغمق قليلاً
+                    decoration: BoxDecoration(color: const Color(0xFFE3E6EA), borderRadius: BorderRadius.circular(10)),
                     child: Row(
                       children: [
                         Expanded(child: _buildCurrencyTab("السعودي (SAR)", "SAR")),
@@ -190,41 +146,22 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 15),
                   Row(
                     children: [
-                      // لون أغمق للنص (Dark Blue/Grey) بدلاً من الرمادي الباهت
-                      const Text("سجل المعاملات", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.primary)),
+                      const Text("سجل المعاملات", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: Color(0xFF2C3E50))),
                       const Spacer(),
                       InkWell(
                         onTap: _pickDateRange,
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            // خلفية مميزة عند التفعيل
-                            color: _startDate != null ? AppColors.primary : AppColors.lightGrey, 
-                            borderRadius: BorderRadius.circular(20), 
-                            border: Border.all(color: Colors.grey.shade300)
-                          ),
+                          decoration: BoxDecoration(color: _startDate != null ? const Color(0xFF2C3E50) : const Color(0xFFF0F2F5), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey.shade300)),
                           child: Row(
                             children: [
                               Icon(Icons.calendar_today, size: 16, color: _startDate != null ? Colors.white : Colors.grey[700]),
                               const SizedBox(width: 8),
-                              Text(
-                                _startDate != null ? '${DateFormat('MM/dd').format(_startDate!)} - ${DateFormat('MM/dd').format(_endDate!)}' : "تصفية بالتاريخ", 
-                                style: TextStyle(
-                                  color: _startDate != null ? Colors.white : Colors.grey[800], // نص أبيض عند التفعيل، أسود رمادي عند عدمه
-                                  fontSize: 12, 
-                                  fontWeight: FontWeight.bold
-                                )
-                              ),
-                              if (_startDate != null) ...[
-                                const SizedBox(width: 8), 
-                                InkWell(
-                                  onTap: _clearDateFilter, 
-                                  child: const Icon(Icons.close, size: 16, color: Colors.white)
-                                )
-                              ],
+                              Text(_startDate != null ? '${DateFormat('MM/dd').format(_startDate!)} - ${DateFormat('MM/dd').format(_endDate!)}' : "تصفية بالتاريخ", style: TextStyle(color: _startDate != null ? Colors.white : Colors.grey[800], fontSize: 12, fontWeight: FontWeight.bold)),
+                              if (_startDate != null) ...[const SizedBox(width: 8), InkWell(onTap: _clearDateFilter, child: const Icon(Icons.close, size: 16, color: Colors.white))],
                             ],
                           ),
                         ),
@@ -236,14 +173,13 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
             ),
           ),
 
-          // 3. القائمة (تم تمرير نص البحث لها)
           TransactionsSliverList(
-            key: ValueKey('$_selectedCurrency-$_startDate-$_searchQuery'), // تحديث عند تغير البحث
+            key: ValueKey('$_selectedCurrency-$_startDate-$_searchQuery'),
             personId: widget.person.id!,
             currency: _selectedCurrency,
             startDate: _startDate,
             endDate: _endDate,
-            searchQuery: _searchQuery, // تمرير كلمة البحث
+            searchQuery: _searchQuery,
             onDataChanged: _refreshAllData,
             onEdit: (t) => _showAddOrEditTransactionDialog(transaction: t),
           ),
@@ -253,7 +189,7 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddOrEditTransactionDialog(),
-        backgroundColor: AppColors.primary,
+        backgroundColor: const Color(0xFF2C3E50),
         icon: const Icon(Icons.add, color: Colors.white),
         label: const Text('معاملة جديدة', style: TextStyle(color: Colors.white)),
       ),
@@ -266,13 +202,9 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
       onTap: () => setState(() => _selectedCurrency = currency),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: isSelected ? [const BoxShadow(color: Colors.black12, blurRadius: 4)] : [],
-        ),
+        decoration: BoxDecoration(color: isSelected ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(8), boxShadow: isSelected ? [const BoxShadow(color: Colors.black12, blurRadius: 4)] : []),
         alignment: Alignment.center,
-        child: Text(label, style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? AppColors.primary : AppColors.grey700)),
+        child: Text(label, style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? const Color(0xFF2C3E50) : Colors.grey[700])),
       ),
     );
   }
@@ -290,7 +222,7 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
     }
   }
 
-  // --- نافذة الإضافة/التعديل (مع التاريخ والصورة) ---
+  // --- نافذة الإضافة/التعديل (مع الخزنة والرسائل) ---
   void _showAddOrEditTransactionDialog({Transaction? transaction}) {
     final isEditing = transaction != null;
     final formKey = GlobalKey<FormState>();
@@ -299,11 +231,8 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
     String transactionType = isEditing ? transaction.type : 'مصروف';
     String currency = isEditing ? transaction.currency : _selectedCurrency;
     String? selectedImagePath = isEditing ? transaction.imagePath : null;
-
-    // متغير لتخزين التاريخ المختار (الافتراضي هو تاريخ المعاملة أو اليوم)
-    DateTime selectedDate = isEditing
-        ? DateTime.parse(transaction.date)
-        : DateTime.now();
+    DateTime selectedDate = isEditing ? DateTime.parse(transaction.date) : DateTime.now();
+    int? selectedWalletId = isEditing ? transaction.walletId : null; // متغير الخزنة
 
     showDialog(
       context: context,
@@ -311,7 +240,6 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
         return StatefulBuilder(
             builder: (context, setStateDialog) {
               return AlertDialog(
-                backgroundColor: AppColors.primary,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                 title: Text(isEditing ? 'تعديل معاملة' : 'إضافة معاملة'),
                 content: Form(
@@ -320,117 +248,68 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // حقل المبلغ
-                        TextFormField(
-                          controller: amountController,
-                          decoration: const InputDecoration(labelText: 'المبلغ', border: OutlineInputBorder()),
-                          keyboardType: TextInputType.number,
-                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                        ),
+                        TextFormField(controller: amountController, decoration: const InputDecoration(labelText: 'المبلغ', border: OutlineInputBorder()), keyboardType: TextInputType.number, validator: (v) => v!.isEmpty ? 'مطلوب' : null),
+                        const SizedBox(height: 10),
+                        TextFormField(controller: descriptionController, decoration: const InputDecoration(labelText: 'الوصف', border: OutlineInputBorder()), validator: (v) => v!.isEmpty ? 'مطلوب' : null),
                         const SizedBox(height: 10),
 
-                        // حقل الوصف
-                        TextFormField(
-                          controller: descriptionController,
-                          decoration: const InputDecoration(labelText: 'الوصف', border: OutlineInputBorder()),
-                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                        ),
-                        const SizedBox(height: 10),
+                        // اختيار الخزينة/البنك (الجديد)
+                        FutureBuilder<List<Wallet>>(
+                          future: ref.read(walletsProvider.future),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData || snapshot.data!.isEmpty) return const SizedBox();
+                            // عرض الخزائن التي بنفس العملة المختارة فقط
+                            final validWallets = snapshot.data!.where((w) => w.currency == currency).toList();
+                            if (validWallets.isEmpty) return const SizedBox();
 
-                        // اختيار التاريخ (الجديد)
+                            return Column(
+                              children: [
+                                DropdownButtonFormField<int>(
+                                  value: selectedWalletId,
+                                  decoration: const InputDecoration(labelText: 'خصم/إيداع في (الخزنة)', border: OutlineInputBorder()),
+                                  items: validWallets.map((w) => DropdownMenuItem(value: w.id, child: Text(w.name))).toList(),
+                                  onChanged: (v) => setStateDialog(() => selectedWalletId = v),
+                                ),
+                                const SizedBox(height: 10),
+                              ],
+                            );
+                          },
+                        ),
+
                         InkWell(
                           onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: selectedDate,
-                              firstDate: DateTime(2000),
-                              lastDate: DateTime(2100),
-                              builder: (context, child) {
-                                return Theme(
-                                  data: ThemeData.light().copyWith(
-                                    colorScheme: const ColorScheme.light(primary: AppColors.primary),
-                                  ),
-                                  child: child!,
-                                );
-                              },
-                            );
-                            if (picked != null) {
-                              setStateDialog(() => selectedDate = picked);
-                            }
+                            final picked = await showDatePicker(context: context, initialDate: selectedDate, firstDate: DateTime(2000), lastDate: DateTime(2100));
+                            if (picked != null) setStateDialog(() => selectedDate = picked);
                           },
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.calendar_today, color: Colors.blue),
-                                const SizedBox(width: 10),
-                                Text(
-                                  "التاريخ: ${DateFormat('yyyy-MM-dd').format(selectedDate)}",
-                                  style: const TextStyle(fontSize: 16),
-                                ),
-                              ],
-                            ),
+                            decoration: BoxDecoration(border: Border.all(color: Colors.grey), borderRadius: BorderRadius.circular(4)),
+                            child: Row(children: [const Icon(Icons.calendar_today, color: Colors.blue), const SizedBox(width: 10), Text("التاريخ: ${DateFormat('yyyy-MM-dd').format(selectedDate)}")]),
                           ),
                         ),
                         const SizedBox(height: 10),
-
-                        // العملة والنوع
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: transactionType,
-                                decoration: const InputDecoration(labelText: 'النوع', border: OutlineInputBorder()),
-                                items: ['مصروف', 'إيراد'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                                onChanged: (v) => setStateDialog(() => transactionType = v!),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: currency,
-                                decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()),
-                                items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                                onChanged: (v) => setStateDialog(() => currency = v!),
-                              ),
-                            ),
-                          ],
-                        ),
+                        Row(children: [
+                          Expanded(child: DropdownButtonFormField<String>(value: transactionType, decoration: const InputDecoration(labelText: 'النوع', border: OutlineInputBorder()), items: ['مصروف', 'إيراد'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() => transactionType = v!))),
+                          const SizedBox(width: 10),
+                          Expanded(child: DropdownButtonFormField<String>(value: currency, decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()), items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() { currency = v!; selectedWalletId = null; }))), // تصفر الخزنة عند تغيير العملة
+                        ]),
                         const SizedBox(height: 15),
-
-                        // زر الصورة
-                        Row(
-                          children: [
-                            IconButton(
-                              icon: Icon(Icons.camera_alt, color: selectedImagePath != null ? Colors.green : Colors.grey),
-                              onPressed: () async {
-                                final ImagePicker picker = ImagePicker();
-                                final XFile? image = await picker.pickImage(source: ImageSource.camera);
-                                if (image != null) {
-                                  setStateDialog(() => selectedImagePath = image.path);
-                                }
-                              },
-                            ),
-                            Text(selectedImagePath != null ? 'تم إرفاق صورة' : 'صورة الفاتورة (اختياري)'),
-                            if (selectedImagePath != null)
-                              IconButton(
-                                icon: const Icon(Icons.close, color: Colors.red),
-                                onPressed: () => setStateDialog(() => selectedImagePath = null),
-                              )
-                          ],
-                        )
+                        Row(children: [
+                          IconButton(icon: Icon(Icons.camera_alt, color: selectedImagePath != null ? Colors.green : Colors.grey), onPressed: () async {
+                            final ImagePicker picker = ImagePicker();
+                            final XFile? image = await picker.pickImage(source: ImageSource.camera);
+                            if (image != null) setStateDialog(() => selectedImagePath = image.path);
+                          }),
+                          Text(selectedImagePath != null ? 'تم إرفاق صورة' : 'صورة الفاتورة (اختياري)'),
+                          if (selectedImagePath != null) IconButton(icon: const Icon(Icons.close, color: Colors.red), onPressed: () => setStateDialog(() => selectedImagePath = null))
+                        ])
                       ],
                     ),
                   ),
                 ),
                 actions: [
-                  TextButton(child: const Text('إلغاء'), onPressed: () => Navigator.of(ctx).pop()),
+                  TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('إلغاء')),
                   FilledButton(
-                    child: Text(isEditing ? 'حفظ' : 'إضافة'),
                     onPressed: () async {
                       if (formKey.currentState!.validate()) {
                         final dbHelper = ref.read(databaseHelperProvider);
@@ -440,22 +319,40 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                           type: transactionType,
                           amount: double.parse(amountController.text),
                           description: descriptionController.text,
-                          // استخدام التاريخ المختار بدلاً من DateTime.now()
                           date: selectedDate.toIso8601String(),
                           currency: currency,
                           imagePath: selectedImagePath,
+                          walletId: selectedWalletId, // حفظ معرف الخزنة
                         );
 
                         if (isEditing) {
                           await dbHelper.updateTransaction(newTx);
                         } else {
                           await dbHelper.addTransaction(newTx);
+
+                          // إرسال رسالة تلقائية عند الإضافة الجديدة فقط
+                          if (context.mounted) {
+                            try {
+                              await MessagingService.sendTransactionMessage(
+                                context: context,
+                                name: widget.person.name,
+                                phone: widget.person.phone,
+                                type: transactionType,
+                                amount: double.parse(amountController.text),
+                                currency: currency,
+                                description: descriptionController.text,
+                              );
+                            } catch (e) {
+                              print("خطأ في المراسلة: $e");
+                            }
+                          }
                         }
 
                         _refreshAllData();
                         Navigator.of(ctx).pop();
                       }
                     },
+                    child: const Text('حفظ'),
                   ),
                 ],
               );
@@ -463,10 +360,9 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
         );
       },
     );
-  }}
+  }
+}
 
-// --- 1. ويدجت الرصيد (المطور والذكي) ---
-// --- 1. ويدجت الرصيد (المطور والذكي) ---
 class UserBalanceHeader extends ConsumerWidget {
   final int personId;
   final String currency;

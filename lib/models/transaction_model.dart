@@ -7,7 +7,10 @@ class Transaction {
   final String date;
   final String currency;
   final String? imagePath;
-  final String? transferId; // <-- الحقل الجديد لربط الحوالات
+  final String? transferId;
+
+  final int? walletId; // <-- الحقل الجديد لربط الحوالات
+
 
   Transaction({
     this.id,
@@ -18,7 +21,7 @@ class Transaction {
     required this.date,
     required this.currency,
     this.imagePath,
-    this.transferId, // <-- أضفه هنا
+    this.transferId, this.walletId, // <-- أضفه هنا
   });
 
   // تحديث toMap
@@ -32,7 +35,8 @@ class Transaction {
       'date': date,
       'currency': currency,
       'imagePath': imagePath,
-      'transferId': transferId, // <-- أضفه هنا
+      'transferId': transferId,
+      'walletId':walletId
     };
   }
 
@@ -47,7 +51,8 @@ class Transaction {
       date: map['date'],
       currency: map['currency'],
       imagePath: map['imagePath'],
-      transferId: map['transferId'], // <-- أضفه هنا
+      transferId: map['transferId'],
+      walletId: map['walletId'],
     );
   }
 
@@ -62,6 +67,7 @@ class Transaction {
     String? currency,
     String? imagePath,
     String? transferId, // <-- أضفه هنا
+    int? walletId
   }) {
     return Transaction(
       id: id ?? this.id,
@@ -73,6 +79,8 @@ class Transaction {
       currency: currency ?? this.currency,
       imagePath: imagePath ?? this.imagePath,
       transferId: transferId ?? this.transferId, // <-- أضفه هنا
+      walletId: walletId ?? this.walletId,
+
     );
   }
 }

@@ -8,6 +8,7 @@ import '../constants/app_colors.dart';
 import '../services/auth_service.dart';
 import '../services/export_service.dart';
 import '../services/google_drive_service.dart';
+import '../services/messaging_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -20,6 +21,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final GoogleDriveService _driveService = GoogleDriveService();
   bool _isLoading = false;
   bool _isBiometricEnabled = false;
+  bool _isAutoSmsEnabled = false;
 
   @override
   void initState() {
@@ -29,7 +31,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _loadBiometricSetting() async {
     final enabled = await AuthService.isBiometricEnabled();
-    setState(() => _isBiometricEnabled = enabled);
+    final smsEnabled = await MessagingService.isAutoSmsEnabled();
+
+      setState(() {
+        _isBiometricEnabled = enabled;
+        _isAutoSmsEnabled = smsEnabled;
+      });
+
   }
 
   // --- دالة النسخ المحلي ---
@@ -146,7 +154,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   },
                 ),
               ]),
-
+              SwitchListTile(
+                secondary: const Icon(Icons.message, color: Colors.green), // أيقونة واتساب
+                title: const Text('إرسال رسالة واتساب'),
+                subtitle: const Text('تلقائياً عند إضافة معاملة'),
+                value: _isAutoSmsEnabled,
+                onChanged: (value) async {
+                  await MessagingService.setAutoSmsEnabled(value); // حفظ في الذاكرة
+                  setState(() => _isAutoSmsEnabled = value); // تحديث الزر
+                  print("Auto SMS Enabled: $_isAutoSmsEnabled");
+                },
+              ),
               _buildSectionTitle("النسخ الاحتياطي (محلي)"),
               _buildSettingsCard([
                 ListTile(
@@ -188,6 +206,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم الخروج')));
                   },
                 ),
+                // ... SwitchListTile
+
               ]),
               const SizedBox(height: 50),
             ]),

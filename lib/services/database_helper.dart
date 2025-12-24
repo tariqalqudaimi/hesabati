@@ -3,6 +3,7 @@ import 'package:sqflite/sqflite.dart' hide Transaction;
 import 'package:path/path.dart';
 import '../models/person_model.dart';
 import '../models/transaction_model.dart';
+import '../models/wallet_model.dart';
 import '../providers/database_providers.dart';
 
 class DatabaseHelper {
@@ -22,7 +23,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'hesabati.db');
     return await openDatabase(
       path,
-      version: 5, // <-- تغيير 1: زدنا رقم الإصدار من 1 إلى 2
+      version: 6, // <-- تغيير 1: زدنا رقم الإصدار من 1 إلى 2
       onCreate: _onCreate,
       onUpgrade: _onUpgrade, // <-- تغيير 2: أضفنا دالة الترقية
     );
@@ -67,6 +68,23 @@ class DatabaseHelper {
       try { await db.execute("ALTER TABLE transactions ADD COLUMN transferId TEXT"); }
       catch (e) {}
     }
+    if (oldVersion < 6) {
+      // 1. إضافة جدول المحافظ
+      await db.execute('''
+        CREATE TABLE wallets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          currency TEXT NOT NULL,
+          initialBalance REAL NOT NULL DEFAULT 0.0
+        )
+      ''');
+
+      // 2. إضافة رقم الهاتف للأشخاص
+      try { await db.execute("ALTER TABLE persons ADD COLUMN phone TEXT"); } catch (e) {}
+
+      // 3. ربط المعاملة بالمحفظة
+      try { await db.execute("ALTER TABLE transactions ADD COLUMN walletId INTEGER REFERENCES wallets(id)"); } catch (e) {}
+    }
     }
   // --- دوال الأشخاص ---
   Future<int> addPerson(Person person) async {
@@ -78,13 +96,10 @@ class DatabaseHelper {
     Database db = await database;
     final List<Map<String, dynamic>> maps = await db.query('persons');
     return List.generate(maps.length, (i) {
-      return Person(id: maps[i]['id'], name: maps[i]['name']);
+      return Person(id: maps[i]['id'], name: maps[i]['name'], phone: maps[i]['phone']);
     });
   }
 
-  // --- دوال المعاملات (الجديدة) ---
-
-  // إضافة معاملة جديدة
   Future<int> addTransaction(Transaction transaction) async {
     Database db = await database;
     return await db.insert('transactions', transaction.toMap());
@@ -206,6 +221,40 @@ class DatabaseHelper {
     await db.delete('persons', where: 'id = ?', whereArgs: [id]);
   }
 
+  // --- دوال المحافظ (Wallets) ---
+  Future<int> addWallet(Wallet wallet) async {
+    final db = await database;
+    return await db.insert('wallets', wallet.toMap());
+  }
+
+  Future<List<Wallet>> getWallets() async {
+    final db = await database;
+    final maps = await db.query('wallets');
+    return List.generate(maps.length, (i) => Wallet.fromMap(maps[i]));
+  }
+
+  // حساب رصيد المحفظة (الرصيد الافتتاحي + الإيرادات - المصروفات)
+  Future<double> getWalletBalance(int walletId) async {
+    final db = await database;
+
+    // 1. الرصيد الافتتاحي
+    final walletRes = await db.query('wallets', where: 'id = ?', whereArgs: [walletId]);
+    if (walletRes.isEmpty) return 0.0;
+    double balance = walletRes.first['initialBalance'] as double;
+
+    // 2. المعاملات المرتبطة بهذه المحفظة
+    final transactions = await db.query('transactions', columns: ['type', 'amount'], where: 'walletId = ?', whereArgs: [walletId]);
+
+    for (var t in transactions) {
+      if (t['type'] == 'إيراد') {
+        balance += (t['amount'] as double); // دخل للمحفظة
+      } else {
+        balance -= (t['amount'] as double); // خرج من المحفظة
+      }
+    }
+    return balance;
+  }
+
   final totalBalanceProvider = FutureProvider.family<double, String>((ref, currency) async {
     final dbHelper = ref.watch(databaseHelperProvider);
     // استدعاء provider آخر لجلب الأشخاص المحدثين
@@ -264,3 +313,4 @@ class DatabaseHelper {
   }
 
 }
+

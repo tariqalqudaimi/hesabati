@@ -115,7 +115,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                   ],
                 ),
                 // استخدمنا الأيقونة بدلاً من الصورة لضمان الوضوح
-                child: Image(image: const AssetImage('assets/logo.png'))
+                child: Expanded(child: Image(width: 50,height:50,image: const AssetImage('assets/logo.png')))
             )),
 
             const SizedBox(height: 30),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hesabati/screens/wallets_screen.dart';
 import '../models/person_model.dart';
 import '../providers/database_providers.dart';
 import '../constants/app_colors.dart';
@@ -354,6 +355,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           _buildFabOption(Icons.person_add, "حساب جديد", AppColors.buttonBlue, () => _showAddOrEditPersonDialog(context, ref)),
+          _buildFabOption(Icons.account_balance, "الخزنة والبنوك", const Color(0xFF009688), () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletsScreen()))),
           _buildFabOption(Icons.compare_arrows, "تحويل مالي", AppColors.buttonPurple, () => _showTransferDialog()),
           _buildFabOption(Icons.monetization_on, "مصارفة عمل", AppColors.buttonBlue, () => showDialog(context: context, builder: (_) => const CurrencyConverterDialog())),
           _buildFabOption(Icons.search, "بحث", AppColors.buttonOrange, () async {
@@ -403,7 +405,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
   void _showAddOrEditPersonDialog(BuildContext context, WidgetRef ref, {Person? person}) {
     final isEditing = person != null;
     final nameController = TextEditingController(text: isEditing ? person.name : '');
-
+    final phoneController = TextEditingController(text: isEditing ? person.phone : '');
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -427,6 +429,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
                 ),
               ),
               const SizedBox(height: 20),
+              // --- حقل رقم الهاتف الجديد ---
+              TextField(
+                controller: phoneController,
+                keyboardType: TextInputType.phone,
+                decoration: InputDecoration(
+                  labelText: 'رقم الهاتف (مع المفتاح)',
+                  hintText: 'مثال: 967770000000',
+                  prefixIcon: const Icon(Icons.phone),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  filled: true,
+                  fillColor: Colors.grey.shade50,
+                ),
+              ),
+              const SizedBox(height: 20),
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -442,9 +459,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
                       if (nameController.text.isNotEmpty) {
                         final db = ref.read(databaseHelperProvider);
                         if (isEditing) {
-                          await db.updatePerson(Person(id: person.id, name: nameController.text));
+                          await db.updatePerson(Person(id: person.id, name: nameController.text, phone: phoneController.text));
                         } else {
-                          await db.addPerson(Person(name: nameController.text));
+                          await db.addPerson(Person(name: nameController.text, phone: phoneController.text));
+
                         }
                         ref.invalidate(personsProvider);
                         ref.invalidate(totalBalanceProvider('SAR'));
