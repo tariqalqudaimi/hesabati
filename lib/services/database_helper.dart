@@ -23,70 +23,79 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'hesabati.db');
     return await openDatabase(
       path,
-      version: 6, // <-- تغيير 1: زدنا رقم الإصدار من 1 إلى 2
+      version: 7, // <--- تغيير 1: ارفع الإصدار إلى 7 لضمان تنفيذ التحديث
       onCreate: _onCreate,
-      onUpgrade: _onUpgrade, // <-- تغيير 2: أضفنا دالة الترقية
+      onUpgrade: _onUpgrade,
     );
   }
 
-  // هذه الدالة تُستدعى فقط عند إنشاء قاعدة البيانات لأول مرة
+// هذه الدالة للمستخدم اللي بيثبت التطبيق أول مرة (بياخد كل الجداول جاهزة)
   Future _onCreate(Database db, int version) async {
     await db.execute('''
-      CREATE TABLE persons (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL
-      )
-    ''');
-    // سنضيف حقل العملة هنا مباشرة للمستخدمين الجدد
+    CREATE TABLE persons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT
+    )
+  ''');
+
     await db.execute('''
-      CREATE TABLE transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        personId INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        amount REAL NOT NULL,
-        description TEXT,
-        date TEXT NOT NULL,
-        currency TEXT NOT NULL 
-      )
-    ''');
+    CREATE TABLE wallets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      initialBalance REAL NOT NULL DEFAULT 0.0
+    )
+  ''');
+
+    await db.execute('''
+    CREATE TABLE transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      personId INTEGER NOT NULL,
+      walletId INTEGER, 
+      type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      description TEXT,
+      date TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      imagePath TEXT,
+      transferId TEXT
+    )
+  ''');
   }
 
-  // في ملف database_helper.dart
+// هذه الدالة للمستخدم اللي عنده التطبيق قديماً وبيعمل تحديث
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // نستخدم try-catch لتجاهل الخطأ إذا كان العمود موجوداً مسبقاً
+    // التحديثات القديمة (1-5)
     if (oldVersion < 2) {
       try { await db.execute("ALTER TABLE transactions ADD COLUMN currency TEXT NOT NULL DEFAULT 'SAR'"); } catch (e) {}
     }
     if (oldVersion < 3) {
       try { await db.execute("ALTER TABLE transactions ADD COLUMN imagePath TEXT"); } catch (e) {}
     }
-    if (oldVersion < 4) {
+    if (oldVersion < 4 || oldVersion < 5) {
       try { await db.execute("ALTER TABLE transactions ADD COLUMN transferId TEXT"); } catch (e) {}
     }
-    if (oldVersion < 5) { // <--- تم التحديث ليشمل الإصدارات القديمة
-      try { await db.execute("ALTER TABLE transactions ADD COLUMN imagePath TEXT"); } catch (e) {}
-      try { await db.execute("ALTER TABLE transactions ADD COLUMN transferId TEXT"); }
-      catch (e) {}
-    }
-    if (oldVersion < 6) {
-      // 1. إضافة جدول المحافظ
-      await db.execute('''
-        CREATE TABLE wallets (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          currency TEXT NOT NULL,
-          initialBalance REAL NOT NULL DEFAULT 0.0
-        )
-      ''');
 
-      // 2. إضافة رقم الهاتف للأشخاص
+    // التحديث للإصدار 6 و 7 (للتأكد من إنشاء الجدول وربطه)
+    if (oldVersion < 7) {
+      // 1. إنشاء جدول المحافظ إذا لم يكن موجوداً
+      await db.execute('''
+      CREATE TABLE IF NOT EXISTS wallets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        currency TEXT NOT NULL,
+        initialBalance REAL NOT NULL DEFAULT 0.0
+      )
+    ''');
+
+      // 2. إضافة رقم الهاتف للأشخاص (إذا لم يضف سابقاً)
       try { await db.execute("ALTER TABLE persons ADD COLUMN phone TEXT"); } catch (e) {}
 
-      // 3. ربط المعاملة بالمحفظة
-      try { await db.execute("ALTER TABLE transactions ADD COLUMN walletId INTEGER REFERENCES wallets(id)"); } catch (e) {}
+      // 3. ربط المعاملة بالمحفظة (إضافة العمود)
+      try { await db.execute("ALTER TABLE transactions ADD COLUMN walletId INTEGER"); } catch (e) {}
     }
-    }
-  // --- دوال الأشخاص ---
+  } // --- دوال الأشخاص ---
   Future<int> addPerson(Person person) async {
     Database db = await database;
     return await db.insert('persons', person.toMap());
@@ -318,7 +327,42 @@ class DatabaseHelper {
 
     return total;
   });
+// دالة حذف الخزنة
+  Future<void> deleteWallet(int id) async {
+    final db = await database;
+    // ملاحظة: سيتم حذف الخزنة فقط.
+    // إذا أردت حذف العمليات المرتبطة بها أيضاً، يجب أن يكون هناك ON DELETE CASCADE في قاعدة البيانات
+    await db.delete(
+      'wallets',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
 
+    // تحديث المعاملات المرتبطة لتصبح بدون خزنة (اختياري)
+    await db.update(
+      'transactions',
+      {'walletId': null},
+      where: 'walletId = ?',
+      whereArgs: [id],
+    );
+  }
+
+  // في ملف database_helper.dart
+
+  Future<List<Map<String, dynamic>>> getWalletTransactionsWithNames(int walletId) async {
+    final db = await database;
+
+    // نستخدم rawQuery لعمل Join بين جدول العمليات وجدول الأشخاص
+    return await db.rawQuery('''
+    SELECT 
+      transactions.*, 
+      persons.name as personName 
+    FROM transactions
+    LEFT JOIN persons ON transactions.personId = persons.id
+    WHERE transactions.walletId = ?
+    ORDER BY transactions.date DESC
+  ''', [walletId]);
+  }
   // --- دالة التحويل المالي ---
   Future<void> transferMoney({
     required int fromPersonId,

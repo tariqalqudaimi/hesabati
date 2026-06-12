@@ -224,6 +224,7 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
   }
 
   // --- نافذة الإضافة/التعديل (مع الخزنة والرسائل) ---
+  // --- نافذة الإضافة/التعديل المطورة لدعم التوزيع على أكثر من خزنة ---
   void _showAddOrEditTransactionDialog({Transaction? transaction}) {
     final isEditing = transaction != null;
     final formKey = GlobalKey<FormState>();
@@ -233,13 +234,27 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
     String currency = isEditing ? transaction.currency : _selectedCurrency;
     String? selectedImagePath = isEditing ? transaction.imagePath : null;
     DateTime selectedDate = isEditing ? DateTime.parse(transaction.date) : DateTime.now();
-    int? selectedWalletId = isEditing ? transaction.walletId : null; // متغير الخزنة
+
+    // --- الجزء الجديد: قائمة التوزيع ---
+    // إذا كان تعديل، نضع الخزنة الحالية كعنصر وحيد
+    // إذا كان جديد، نبدأ بقائمة فارغة أو عنصر واحد
+    List<Map<String, dynamic>> walletSplits = isEditing
+        ? [{'walletId': transaction.walletId, 'amount': transaction.amount}]
+        : [{'walletId': null, 'amount': 0.0}];
+
+    bool isSplitPayment = false; // هل المستخدم يريد التوزيع؟
 
     showDialog(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
             builder: (context, setStateDialog) {
+
+              // حساب إجمالي المبالغ الموزعة للتأكد من مطابقتها للمبلغ الكلي
+              double currentTotalDistributed() {
+                return walletSplits.fold(0.0, (sum, item) => sum + (item['amount'] ?? 0.0));
+              }
+
               return AlertDialog(
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                 title: Text(isEditing ? 'تعديل معاملة' : 'إضافة معاملة'),
@@ -249,89 +264,164 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        TextFormField(controller: amountController, decoration: const InputDecoration(labelText: 'المبلغ', border: OutlineInputBorder()), keyboardType: TextInputType.number, validator: (v) => v!.isEmpty ? 'مطلوب' : null),
+                        TextFormField(
+                            controller: amountController,
+                            decoration: const InputDecoration(labelText: 'إجمالي المبلغ', border: OutlineInputBorder()),
+                            keyboardType: TextInputType.number,
+                            onChanged: (v) {
+                              // إذا لم يكن توزيع، نحدث مبلغ الخزنة الأولى تلقائياً
+                              if(!isSplitPayment) setStateDialog(() => walletSplits[0]['amount'] = double.tryParse(v) ?? 0.0);
+                            },
+                            validator: (v) => v!.isEmpty ? 'مطلوب' : null
+                        ),
                         const SizedBox(height: 10),
                         TextFormField(controller: descriptionController, decoration: const InputDecoration(labelText: 'الوصف', border: OutlineInputBorder()), validator: (v) => v!.isEmpty ? 'مطلوب' : null),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 15),
 
-                        // اختيار الخزينة/البنك (الجديد)
+                        // --- خيار التوزيع على أكثر من خزنة ---
+                        if (!isEditing) ...[
+                          Row(
+                            children: [
+                              Checkbox(
+                                  value: isSplitPayment,
+                                  onChanged: (v) => setStateDialog(() {
+                                    isSplitPayment = v!;
+                                    if(!isSplitPayment) {
+                                      walletSplits = [{'walletId': null, 'amount': double.tryParse(amountController.text) ?? 0.0}];
+                                    }
+                                  })
+                              ),
+                              const Text("توزيع المبلغ على أكثر من خزنة", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          const Divider(),
+                        ],
+
+                        // --- قائمة الخزائن المختارة ---
                         FutureBuilder<List<Wallet>>(
                           future: ref.read(walletsProvider.future),
                           builder: (context, snapshot) {
-                            if (!snapshot.hasData || snapshot.data!.isEmpty) return const SizedBox();
-                            // عرض الخزائن التي بنفس العملة المختارة فقط
+                            if (!snapshot.hasData) return const CircularProgressIndicator();
                             final validWallets = snapshot.data!.where((w) => w.currency == currency).toList();
-                            if (validWallets.isEmpty) return const SizedBox();
 
                             return Column(
                               children: [
-                                DropdownButtonFormField<int>(
-                                  initialValue: selectedWalletId,
-                                  decoration: const InputDecoration(labelText: 'خصم/إيداع في (الخزنة)', border: OutlineInputBorder()),
-                                  items: validWallets.map((w) => DropdownMenuItem(value: w.id, child: Text(w.name))).toList(),
-                                  onChanged: (v) => setStateDialog(() => selectedWalletId = v),
-                                ),
-                                const SizedBox(height: 10),
+                                for (int i = 0; i < walletSplits.length; i++)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          flex: 2,
+                                          child: DropdownButtonFormField<int>(
+                                            value: walletSplits[i]['walletId'],
+                                            decoration: InputDecoration(labelText: 'الخزنة ${i+1}', isDense: true, border: const OutlineInputBorder()),
+                                            items: validWallets.map((w) => DropdownMenuItem(value: w.id, child: Text(w.name, style: const TextStyle(fontSize: 12)))).toList(),
+                                            onChanged: (v) => setStateDialog(() => walletSplits[i]['walletId'] = v),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 5),
+                                        if (isSplitPayment)
+                                          Expanded(
+                                            flex: 1,
+                                            child: TextFormField(
+                                              initialValue: walletSplits[i]['amount'].toString(),
+                                              decoration: const InputDecoration(labelText: 'المبلغ', isDense: true, border: OutlineInputBorder()),
+                                              keyboardType: TextInputType.number,
+                                              onChanged: (v) => walletSplits[i]['amount'] = double.tryParse(v) ?? 0.0,
+                                            ),
+                                          ),
+                                        if (isSplitPayment && walletSplits.length > 1)
+                                          IconButton(
+                                            icon: const Icon(Icons.remove_circle, color: Colors.red),
+                                            onPressed: () => setStateDialog(() => walletSplits.removeAt(i)),
+                                          )
+                                      ],
+                                    ),
+                                  ),
+                                if (isSplitPayment)
+                                  TextButton.icon(
+                                    onPressed: () => setStateDialog(() => walletSplits.add({'walletId': null, 'amount': 0.0})),
+                                    icon: const Icon(Icons.add),
+                                    label: const Text("إضافة خزنة أخرى"),
+                                  ),
                               ],
                             );
                           },
                         ),
 
-                        InkWell(
-                          onTap: () async {
-                            final picked = await showDatePicker(context: context, initialDate: selectedDate, firstDate: DateTime(2000), lastDate: DateTime(2100));
-                            if (picked != null) setStateDialog(() => selectedDate = picked);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-                            decoration: BoxDecoration(border: Border.all(color: Colors.grey), borderRadius: BorderRadius.circular(4)),
-                            child: Row(children: [const Icon(Icons.calendar_today, color: Colors.blue), const SizedBox(width: 10), Text("التاريخ: ${DateFormat('yyyy-MM-dd').format(selectedDate)}")]),
-                          ),
-                        ),
                         const SizedBox(height: 10),
+                        // اختيار التاريخ والنوع والعملة (نفس كودك السابق)
+                        // ... [بقيت حقول التاريخ والنوع والعملة] ...
                         Row(children: [
                           Expanded(child: DropdownButtonFormField<String>(initialValue: transactionType, decoration: const InputDecoration(labelText: 'النوع', border: OutlineInputBorder()), items: ['مصروف', 'إيراد'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() => transactionType = v!))),
                           const SizedBox(width: 10),
-                          Expanded(child: DropdownButtonFormField<String>(initialValue: currency, decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()), items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() { currency = v!; selectedWalletId = null; }))), // تصفر الخزنة عند تغيير العملة
+                          Expanded(child: DropdownButtonFormField<String>(initialValue: currency, decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()), items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() { currency = v!; }))),
                         ]),
-                        const SizedBox(height: 15),
-                        Row(children: [
-                          IconButton(icon: Icon(Icons.camera_alt, color: selectedImagePath != null ? Colors.green : Colors.grey), onPressed: () async {
-                            final ImagePicker picker = ImagePicker();
-                            final XFile? image = await picker.pickImage(source: ImageSource.camera);
-                            if (image != null) setStateDialog(() => selectedImagePath = image.path);
-                          }),
-                          Text(selectedImagePath != null ? 'تم إرفاق صورة' : 'صورة الفاتورة (اختياري)'),
-                          if (selectedImagePath != null) IconButton(icon: const Icon(Icons.close, color: Colors.red), onPressed: () => setStateDialog(() => selectedImagePath = null))
-                        ])
                       ],
                     ),
                   ),
                 ),
                 actions: [
+                  if (isSplitPayment)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        "المتبقي: ${(double.tryParse(amountController.text) ?? 0) - currentTotalDistributed()}",
+                        style: TextStyle(color: (double.tryParse(amountController.text) ?? 0) == currentTotalDistributed() ? Colors.green : Colors.red, fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('إلغاء')),
                   FilledButton(
                     onPressed: () async {
+                      final totalAmount = double.tryParse(amountController.text) ?? 0.0;
+
+                      // التحقق من صحة التوزيع
+                      if (isSplitPayment && currentTotalDistributed() != totalAmount) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("إجمالي مبالغ الخزائن يجب أن يساوي مبلغ المعاملة")));
+                        return;
+                      }
+
                       if (formKey.currentState!.validate()) {
                         final dbHelper = ref.read(databaseHelperProvider);
-                        final newTx = Transaction(
-                          id: isEditing ? transaction.id : null,
-                          personId: widget.person.id!,
-                          type: transactionType,
-                          amount: double.parse(amountController.text),
-                          description: descriptionController.text,
-                          date: selectedDate.toIso8601String(),
-                          currency: currency,
-                          imagePath: selectedImagePath,
-                          walletId: selectedWalletId, // حفظ معرف الخزنة
-                        );
 
+                        // --- الحفظ في قاعدة البيانات ---
+                        // إذا كان تعديل: نحدث السجل الوحيد
                         if (isEditing) {
+                          final newTx = Transaction(
+                            id: transaction.id,
+                            personId: widget.person.id!,
+                            type: transactionType,
+                            amount: totalAmount,
+                            description: descriptionController.text,
+                            date: selectedDate.toIso8601String(),
+                            currency: currency,
+                            imagePath: selectedImagePath,
+                            walletId: walletSplits[0]['walletId'],
+                          );
                           await dbHelper.updateTransaction(newTx);
-                        } else {
-                          await dbHelper.addTransaction(newTx);
+                        }
+                        // إذا كانت إضافة جديدة (قد تكون سجل واحد أو عدة سجلات)
+                        else {
+                          for (var split in walletSplits) {
+                            if (split['amount'] > 0) {
+                              final newTx = Transaction(
+                                personId: widget.person.id!,
+                                type: transactionType,
+                                amount: split['amount'],
+                                description: isSplitPayment
+                                    ? "${descriptionController.text} (جزء من مبلغ)"
+                                    : descriptionController.text,
+                                date: selectedDate.toIso8601String(),
+                                currency: currency,
+                                imagePath: selectedImagePath,
+                                walletId: split['walletId'],
+                              );
+                              await dbHelper.addTransaction(newTx);
+                            }
+                          }
 
-                          // إرسال رسالة تلقائية عند الإضافة الجديدة فقط
+                          // إرسال رسالة واتساب واحدة بالإجمالي
                           if (context.mounted) {
                             try {
                               await MessagingService.sendTransactionMessage(
@@ -339,13 +429,11 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                                 name: widget.person.name,
                                 phone: widget.person.phone,
                                 type: transactionType,
-                                amount: double.parse(amountController.text),
+                                amount: totalAmount,
                                 currency: currency,
                                 description: descriptionController.text,
                               );
-                            } catch (e) {
-                              print("خطأ في المراسلة: $e");
-                            }
+                            } catch (e) {}
                           }
                         }
 

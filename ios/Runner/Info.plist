@@ -49,5 +49,9 @@
 		<true/>
 		<key>UIViewControllerBasedStatusBarAppearance</key>
 		<false/>
+		<key>NSMicrophoneUsageDescription</key>
+        <string>نحتاج الوصول للميكروفون لتحويل صوتك إلى عمليات مالية</string>
+        <key>NSSpeechRecognitionUsageDescription</key>
+        <string>نحتاج صلاحية التعرف على الكلام لتحليل العمليات</string>
 	</dict>
 </plist>

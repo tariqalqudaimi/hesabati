@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hesabati/screens/wallet_history_screen.dart';
 import '../models/wallet_model.dart';
 import '../services/database_helper.dart';
 import '../providers/database_providers.dart';
 import 'wallet_transfer_screen.dart';
 
-// Providers
+// --- Providers ---
 final walletsProvider = FutureProvider<List<Wallet>>((ref) async {
   return DatabaseHelper().getWallets();
 });
@@ -22,159 +23,330 @@ class WalletsScreen extends ConsumerStatefulWidget {
 }
 
 class _WalletsScreenState extends ConsumerState<WalletsScreen> {
-  // للتحكم بسعر الصرف لحساب الفارق النهائي
   final TextEditingController _rateController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
   double _exchangeRate = 0.0;
+  String _searchQuery = "";
 
   @override
   void dispose() {
     _rateController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
+  // --- دالة الحذف ---
+  void _confirmDelete(Wallet wallet) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("حذف الحساب؟"),
+        content: Text("هل أنت متأكد من حذف '${wallet.name}'؟ سيتم فصل العمليات المرتبطة به ولكن لن تُحذف."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("إلغاء")),
+          TextButton(
+            onPressed: () async {
+              await DatabaseHelper().deleteWallet(wallet.id!);
+              ref.invalidate(walletsProvider);
+              ref.invalidate(totalWalletsBalanceProvider('SAR'));
+              ref.invalidate(totalWalletsBalanceProvider('YER'));
+              if (mounted) Navigator.pop(ctx);
+            },
+            child: const Text("حذف", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- دالة الإضافة والتعديل ---
+// داخل _WalletsScreenState
+
+  void _showAddOrEditWalletDialog({Wallet? wallet}) async {
+    final isEditing = wallet != null;
+    final nameController = TextEditingController(text: isEditing ? wallet.name : '');
+    final balanceController = TextEditingController();
+    String currency = isEditing ? wallet.currency : 'SAR';
+
+    // متغيرات لحمل رسائل الخطأ
+    String? nameError;
+    String? balanceError;
+
+    if (isEditing) {
+      final currentBalance = await ref.read(walletBalanceProvider(wallet.id!).future);
+      balanceController.text = currentBalance.toStringAsFixed(2);
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text(isEditing ? 'تعديل / تسوية' : 'إضافة حساب جديد'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  labelText: 'اسم الخزنة',
+                  errorText: nameError, // إظهار الخطأ هنا
+                  border: const OutlineInputBorder(),
+                ),
+                onChanged: (v) => setDialogState(() => nameError = null), // إخفاء الخطأ عند الكتابة
+              ),
+              const SizedBox(height: 15),
+              if (!isEditing)
+                DropdownButtonFormField<String>(
+                  value: currency,
+                  items: ['SAR', 'YER'].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (v) => setDialogState(() => currency = v!),
+                  decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()),
+                ),
+              const SizedBox(height: 15),
+              TextField(
+                controller: balanceController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: isEditing ? 'الرصيد الفعلي الحالي' : 'الرصيد الافتتاحي',
+                  errorText: balanceError, // إظهار الخطأ هنا
+                  border: const OutlineInputBorder(),
+                  suffixText: currency,
+                ),
+                onChanged: (v) => setDialogState(() => balanceError = null),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2C3E50), foregroundColor: Colors.white),
+              onPressed: () async {
+                // --- التحقق من المدخلات ---
+                bool isValid = true;
+                if (nameController.text.trim().isEmpty) {
+                  setDialogState(() => nameError = "يرجى إدخال الاسم");
+                  isValid = false;
+                }
+                if (balanceController.text.trim().isEmpty) {
+                  setDialogState(() => balanceError = "يرجى إدخال المبلغ");
+                  isValid = false;
+                }
+
+                if (!isValid) return; // توقف إذا وجد خطأ
+
+                // --- تنفيذ الحفظ ---
+                final db = DatabaseHelper();
+                final double enteredBalance = double.tryParse(balanceController.text) ?? 0.0;
+
+                if (isEditing) {
+                  await db.updateWallet(Wallet(id: wallet.id, name: nameController.text, currency: wallet.currency, initialBalance: wallet.initialBalance));
+                  final oldBal = await ref.read(walletBalanceProvider(wallet.id!).future);
+                  if (enteredBalance != oldBal) {
+                    await db.adjustWalletBalance(walletId: wallet.id!, oldBalance: oldBal, newBalance: enteredBalance, currency: wallet.currency);
+                  }
+                } else {
+                  await db.addWallet(Wallet(name: nameController.text, currency: currency, initialBalance: enteredBalance));
+                }
+
+                ref.invalidate(walletsProvider);
+                ref.invalidate(walletBalanceProvider);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
   @override
   Widget build(BuildContext context) {
     final walletsAsync = ref.watch(walletsProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: const Text('الخزينة والبنوك'),
+        title: const Text("الخزينة والبنوك", style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
         backgroundColor: const Color(0xFF2C3E50),
         foregroundColor: Colors.white,
-        centerTitle: true,
+        elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.sync_alt),
-            tooltip: "نقل ومصارفة",
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletTransferScreen()));
-            },
+            icon: const Icon(Icons.swap_horiz_rounded, size: 28),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletTransferScreen())),
           )
         ],
       ),
       body: Column(
         children: [
-          // --- 1. قائمة الخزائن ---
+          // إحصائيات علوية
+          _buildTopSummary(),
+
+          // بحث
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: "بحث عن حساب...",
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+              onChanged: (v) => setState(() => _searchQuery = v),
+            ),
+          ),
+
+          // قائمة الحسابات
           Expanded(
             child: walletsAsync.when(
               data: (wallets) {
-                if (wallets.isEmpty) {
-                  return const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.account_balance_wallet_outlined, size: 80, color: Colors.grey),
-                        SizedBox(height: 10),
-                        Text("لم تضف أي خزنة أو بنك", style: TextStyle(fontSize: 18, color: Colors.grey)),
-                      ],
-                    ),
-                  );
-                }
+                final filtered = wallets.where((w) => w.name.contains(_searchQuery)).toList();
+                if (filtered.isEmpty) return const Center(child: Text("لا توجد حسابات مضافة"));
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
-                  itemCount: wallets.length,
-                  itemBuilder: (context, index) => WalletCard(
-                    wallet: wallets[index],
-                    onEdit: () => _showAddOrEditWalletDialog(wallet: wallets[index]), // زر التعديل
+                  itemCount: filtered.length,
+                  itemBuilder: (ctx, i) => _EnhancedWalletCard(
+                    wallet: filtered[i],
+                    onEdit: () => _showAddOrEditWalletDialog(wallet: filtered[i]),
+                    onDelete: () => _confirmDelete(filtered[i]),
                   ),
                 );
               },
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, s) => Center(child: Text('خطأ: $e')),
+              error: (e, s) => Center(child: Text("خطأ: $e")),
             ),
           ),
 
-          // --- 2. قسم المطابقة والناتج النهائي ---
+          // قسم المطابقة السفلي
           _buildReconciliationSection(),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddOrEditWalletDialog(),
-        label: const Text('إضافة خزنة'),
-        icon: const Icon(Icons.add),
         backgroundColor: const Color(0xFF2C3E50),
-        foregroundColor: Colors.white,
+        onPressed: () => _showAddOrEditWalletDialog(),
+        label: const Text("إضافة حساب", style: TextStyle(color: Colors.white)),
+        icon: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
 
-  // --- قسم المطابقة (الجديد) ---
+  Widget _buildTopSummary() {
+    final sar = ref.watch(totalWalletsBalanceProvider('SAR')).value ?? 0;
+    final yer = ref.watch(totalWalletsBalanceProvider('YER')).value ?? 0;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(
+        color: Color(0xFF2C3E50),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+      ),
+      child: Row(
+        children: [
+          _summaryBox("إجمالي السعودي", sar, Colors.greenAccent),
+          const SizedBox(width: 12),
+          _summaryBox("إجمالي اليمني", yer, Colors.orangeAccent),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryBox(String title, double amount, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            FittedBox(child: Text(amount.toStringAsFixed(0), style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.bold))),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildReconciliationSection() {
-    // مراقبة القيم للسعودي واليمني
-    final actualSar = ref.watch(totalWalletsBalanceProvider('SAR')).value ?? 0;
-    final bookSar = ref.watch(totalBalanceProvider('SAR')).value ?? 0;
+    // 1. جلب البيانات من الـ Providers
+    final actualSar = ref.watch(totalWalletsBalanceProvider('SAR')).value ?? 0.0;
+    final bookSar = ref.watch(totalBalanceProvider('SAR')).value ?? 0.0;
     final diffSar = actualSar - bookSar;
 
-    final actualYer = ref.watch(totalWalletsBalanceProvider('YER')).value ?? 0;
-    final bookYer = ref.watch(totalBalanceProvider('YER')).value ?? 0;
+    final actualYer = ref.watch(totalWalletsBalanceProvider('YER')).value ?? 0.0;
+    final bookYer = ref.watch(totalBalanceProvider('YER')).value ?? 0.0;
     final diffYer = actualYer - bookYer;
 
-    // حساب الصافي النهائي باليمني
-    // المعادلة: (فارق السعودي * الصرف) + فارق اليمني
+    // 2. حساب الصافي النهائي باليمني (تحويل فارق السعودي + فارق اليمني)
     final double totalNetInYer = (diffSar * _exchangeRate) + diffYer;
-    final Color netColor = totalNetInYer >= 0 ? Colors.green : Colors.red;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+      padding: const EdgeInsets.fromLTRB(20, 15, 20, 100), // مساحة للـ FAB
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, -5))],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text("تقرير المطابقة (الفارق)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF2C3E50))),
-          const Divider(),
-          
-          // صفوف الفارق لكل عملة
-          _buildDiffRow('SAR', diffSar),
-          _buildDiffRow('YER', diffYer),
-          
-          const SizedBox(height: 10),
-          
-          // --- حقل سعر الصرف والناتج النهائي ---
+          const Text("تحليل المطابقة (الفعلي vs الدفتري)",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.blueGrey)),
+          const SizedBox(height: 15),
+
+          // عرض الفوارق بالتفصيل
+          Row(
+            children: [
+              _buildDiffItem("فارق السعودي", diffSar, "SAR"),
+              const SizedBox(width: 10),
+              _buildDiffItem("فارق اليمني", diffYer, "YER"),
+            ],
+          ),
+
+          const Divider(height: 25),
+
+          // منطقة حساب الناتج النهائي
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFFF8F9FA),
               borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: Colors.grey.shade300),
             ),
             child: Row(
               children: [
-                // إدخال سعر الصرف
+                // مدخل سعر الصرف
                 Expanded(
                   flex: 2,
                   child: TextField(
                     controller: _rateController,
-                    keyboardType: TextInputType.number,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (v) => setState(() => _exchangeRate = double.tryParse(v) ?? 0),
                     decoration: const InputDecoration(
-                      labelText: "سعر الصرف (SAR->YER)",
-                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      labelText: "سعر الصرف",
+                      prefixIcon: Icon(Icons.calculate_outlined, size: 20),
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
-                    onChanged: (v) {
-                      setState(() {
-                        _exchangeRate = double.tryParse(v) ?? 0.0;
-                      });
-                    },
                   ),
                 ),
                 const SizedBox(width: 15),
-                // الناتج النهائي
+                // عرض الصافي النهائي
                 Expanded(
                   flex: 3,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      const Text("الصافي النهائي (يمني)", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      const Text("إجمالي العجز / الزيادة (YER)", style: TextStyle(fontSize: 11, color: Colors.grey)),
                       FittedBox(
                         child: Text(
-                          totalNetInYer.toStringAsFixed(0),
-                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: netColor),
+                          "${totalNetInYer > 0 ? '+' : ''}${totalNetInYer.toStringAsFixed(0)}",
+                          style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: totalNetInYer == 0 ? Colors.grey : (totalNetInYer > 0 ? Colors.green : Colors.red)
+                          ),
                         ),
                       ),
                     ],
@@ -183,158 +355,50 @@ class _WalletsScreenState extends ConsumerState<WalletsScreen> {
               ],
             ),
           ),
-          
-          const SizedBox(height: 90), // مساحة للزر العائم
         ],
       ),
     );
   }
 
-  Widget _buildDiffRow(String currency, double diff) {
-    Color color = diff == 0 ? Colors.grey : (diff > 0 ? Colors.green : Colors.red);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 5.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text("فارق $currency:", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black54)),
-          Text(diff.toStringAsFixed(0), style: TextStyle(fontWeight: FontWeight.bold, color: color)),
-        ],
-      ),
-    );
-  }
+// عنصر عرض الفارق الصغير
+  Widget _buildDiffItem(String label, double value, String currency) {
+    final isPositive = value > 0;
+    final isNegative = value < 0;
 
-  // --- نافذة إضافة / تعديل الخزنة (الذكية) ---
-  void _showAddOrEditWalletDialog({Wallet? wallet}) async {
-    final isEditing = wallet != null;
-    final nameController = TextEditingController(text: isEditing ? wallet.name : '');
-    final balanceController = TextEditingController();
-    String currency = isEditing ? wallet.currency : 'SAR';
-
-    // إذا كان تعديل، نجلب الرصيد الحالي الفعلي من الـ Provider
-    if (isEditing) {
-      // نستخدم الـ Provider لجلب الرصيد الحالي المحسوب
-      final currentBalance = await ref.read(walletBalanceProvider(wallet.id!).future);
-      balanceController.text = currentBalance.toStringAsFixed(2); // نعرض الرصيد الحالي
-    } else {
-      balanceController.text = '0'; // إذا جديد، صفر
-    }
-
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Text(isEditing ? 'تعديل الرصيد الحالي' : 'إضافة مصدر مال'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade200),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
           children: [
-            // اسم الخزنة
-            TextField(
-              controller: nameController, 
-              decoration: const InputDecoration(labelText: 'الاسم', border: OutlineInputBorder()),
-
-            ),
-            const SizedBox(height: 15),
-            
-            // الرصيد (هنا السحر: إذا عدلته سيقوم بعمل تسوية)
-            TextField(
-              controller: balanceController, 
-              decoration: InputDecoration(
-                labelText: isEditing ? 'الرصيد الفعلي الموجود الآن' : 'الرصيد الافتتاحي',
-                border: const OutlineInputBorder(),
-                suffixText: currency,
-              filled: isEditing,
-              ), 
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
-            
-            if (isEditing)
-              const Padding(
-                padding: EdgeInsets.only(top: 8.0),
-                child: Text(
-                  "تنبيه: تعديل هذا الرقم سيضيف عملية 'تسوية' تلقائية لضبط الحساب.",
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
-                ),
+            Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            Text(
+              "${isPositive ? '+' : ''}${value.toStringAsFixed(0)}",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: value == 0 ? Colors.blueGrey : (isPositive ? Colors.green : Colors.red),
               ),
-
-            const SizedBox(height: 10),
-            
-            // العملة (مقفلة عند التعديل)
-            if (!isEditing)
-              DropdownButtonFormField<String>(
-                value: currency,
-                items: ['SAR', 'YER'].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                onChanged: (v) => currency = v!,
-                decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()),
-              ),
+            ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF2C3E50)),
-            onPressed: () async {
-              if (nameController.text.isNotEmpty && balanceController.text.isNotEmpty) {
-                final db = DatabaseHelper();
-                
-                if (isEditing) {
-                  // 1. تحديث الاسم فقط
-                  final updatedWallet = Wallet(
-                    id: wallet.id,
-                    name: nameController.text,
-                    currency: wallet.currency,
-                    initialBalance: wallet.initialBalance, // لا نغير الافتتاحي
-                  );
-                  await db.updateWallet(updatedWallet);
-
-                  // 2. معالجة تعديل الرصيد (التسوية)
-                  final newBalance = double.tryParse(balanceController.text) ?? 0.0;
-                  // نجلب الرصيد القديم مرة أخرى للتأكد
-                  final oldBalance = await ref.read(walletBalanceProvider(wallet.id!).future);
-                  
-                  if (newBalance != oldBalance) {
-                    await db.adjustWalletBalance(
-                      walletId: wallet.id!,
-                      oldBalance: oldBalance,
-                      newBalance: newBalance,
-                      currency: wallet.currency,
-                    );
-                  }
-
-                } else {
-                  // إضافة خزنة جديدة
-                  await db.addWallet(Wallet(
-                    name: nameController.text,
-                    currency: currency,
-                    initialBalance: double.tryParse(balanceController.text) ?? 0.0,
-                  ));
-                }
-                
-                // تحديث الواجهات
-                ref.invalidate(walletsProvider);
-                ref.invalidate(walletBalanceProvider); 
-                ref.invalidate(totalWalletsBalanceProvider('SAR'));
-                ref.invalidate(totalWalletsBalanceProvider('YER'));
-                
-                if (ctx.mounted) Navigator.pop(ctx);
-              }
-            },
-            child: const Text('حفظ التعديلات',style: TextStyle(color: Colors.white),),
-          ),
-        ],
       ),
     );
+  }
+  Widget _diffText(String label, double val) {
+    return Text("$label: ${val.toStringAsFixed(0)}", style: TextStyle(fontWeight: FontWeight.bold, color: val >= 0 ? Colors.green : Colors.red));
   }
 }
 
-// --- بطاقة الخزنة (معدلة بزر التعديل) ---
-class WalletCard extends ConsumerWidget {
+// --- بطاقة الحساب المحسنة ---
+class _EnhancedWalletCard extends ConsumerWidget {
   final Wallet wallet;
-  final VoidCallback onEdit; // دالة التعديل
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
-  const WalletCard({super.key, required this.wallet, required this.onEdit});
+  const _EnhancedWalletCard({required this.wallet, required this.onEdit, required this.onDelete});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -345,38 +409,47 @@ class WalletCard extends ConsumerWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(15),
-        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))],
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: const Color(0xFFE8F6F3), borderRadius: BorderRadius.circular(10)),
-          child: Icon(
-            wallet.name.contains('بنك') ? Icons.account_balance : Icons.account_balance_wallet,
-            color: const Color(0xFF16A085),
+      child: Column(
+        children: [
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: const Color(0xFFF0F2F5),
+              child: Icon(wallet.name.contains("بنك") ? Icons.account_balance : Icons.wallet, color: const Color(0xFF2C3E50)),
+            ),
+            title: Text(wallet.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(wallet.currency, style: const TextStyle(fontSize: 12)),
+            trailing: balanceAsync.when(
+              data: (bal) => Text(bal.toStringAsFixed(2), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: bal >= 0 ? Colors.teal : Colors.redAccent)),
+              loading: () => const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+              error: (_, __) => const Icon(Icons.error),
+            ),
           ),
-        ),
-        title: Text(wallet.name, style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2C3E50))),
-        subtitle: Text(wallet.currency, style: const TextStyle(color: Colors.grey)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            balanceAsync.when(
-              data: (bal) => Text(
-                bal.toStringAsFixed(2),
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: bal >= 0 ? const Color(0xFF27AE60) : const Color(0xFFC0392B)),
+          const Divider(height: 1, indent: 20, endIndent: 20),
+          // داخل كلاس _EnhancedWalletCard
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              // زر السجل الجديد
+              TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => WalletHistoryScreen(walletId: wallet.id!, walletName: wallet.name))
+                    );
+                  },
+                  icon: const Icon(Icons.history, size: 18, color: Colors.blueGrey),
+                  label: const Text("السجل", style: TextStyle(color: Colors.blueGrey))
               ),
-              loading: () => const Text('...'),
-              error: (_, __) => const Text('!'),
-            ),
-            const SizedBox(width: 10),
-            IconButton(
-              icon: const Icon(Icons.edit, size: 20, color: Colors.blue),
-              onPressed: onEdit,
-            ),
-          ],
-        ),
+
+              TextButton.icon(onPressed: onEdit, icon: const Icon(Icons.edit_note, size: 20), label: const Text("تعديل")),
+
+              TextButton.icon(onPressed: onDelete, icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red), label: const Text("حذف", style: TextStyle(color: Colors.red))),
+            ],
+          )
+        ],
       ),
     );
   }

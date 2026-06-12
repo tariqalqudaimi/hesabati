@@ -9,7 +9,7 @@ import '../widgets/currency_converter_dialog.dart';
 import 'settings_screen.dart';
 import 'user_account_screen.dart';
 import '../delegates/search_person_delegate.dart';
-
+import './smart_assistant_dialog.dart';
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -366,7 +366,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
             final persons = await ref.read(personsProvider.future);
             if(mounted) showSearch(context: context, delegate: PersonSearchDelegate(persons));
           }),
-
+          _buildFabOption(
+              Icons.auto_awesome,
+              "المساعد الذكي",
+              Colors.amber.shade700,
+                  () async {
+                final persons = await ref.read(personsProvider.future);
+                final wallets = await ref.read(walletsProvider.future);
+                if (mounted) {
+                  showDialog(
+                    context: context,
+                    builder: (_) => SmartAssistantDialog(
+                      persons: persons,
+                      wallets: wallets,
+                      onComplete: () {
+                        ref.invalidate(personsProvider);
+                        ref.invalidate(totalBalanceProvider('SAR'));
+                        ref.invalidate(totalBalanceProvider('YER'));
+                      },
+                    ),
+                  );
+                }
+              }
+          ),
           const SizedBox(height: 10),
           FloatingActionButton(
             heroTag: 'main_fab',
