@@ -52,7 +52,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
   void _toggleMenu() {
     setState(() {
       _isMenuOpen = !_isMenuOpen;
-      if (_isMenuOpen) _animationController.forward(); else _animationController.reverse();
+      if (_isMenuOpen) {
+        _animationController.forward();
+      } else {
+        _animationController.reverse();
+      }
     });
   }
 
@@ -167,7 +171,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
                                       Expanded(
                                         flex: 1,
                                         child: DropdownButtonFormField<String>(
-                                          value: _transferCurrency,
+                                          initialValue: _transferCurrency,
                                           decoration: _inputDecoration("العملة", Icons.currency_exchange),
                                           items: ['SAR', 'YER'].map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontWeight: FontWeight.bold)))).toList(),
                                           onChanged: (v) => setState(() => _transferCurrency = v!),
@@ -251,7 +255,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
   Widget _buildDropdown(String label, List<Person> items, Person? value, Function(Person?) onChanged, IconData icon, Color iconColor) {
     return DropdownButtonFormField<Person>(dropdownColor: AppColors.lightGrey,
 
-      value: value,
+      initialValue: value,
       decoration: _inputDecoration(label, icon).copyWith(prefixIcon: Icon(icon, color: iconColor)),
       items: items.map((p) => DropdownMenuItem(value: p, child: Text(p.name, style: const TextStyle(color: AppColors.black87)))).toList(),
       onChanged: onChanged,

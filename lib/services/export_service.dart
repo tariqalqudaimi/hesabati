@@ -147,9 +147,17 @@ class ExportService {
     double totalYerExpense = 0;
     for(var t in transactions) {
       if(t.currency == 'SAR') {
-        if(t.type == 'إيراد') totalSarIncome += t.amount; else totalSarExpense += t.amount;
+        if(t.type == 'إيراد') {
+          totalSarIncome += t.amount;
+        } else {
+          totalSarExpense += t.amount;
+        }
       } else {
-        if(t.type == 'إيراد') totalYerIncome += t.amount; else totalYerExpense += t.amount;
+        if(t.type == 'إيراد') {
+          totalYerIncome += t.amount;
+        } else {
+          totalYerExpense += t.amount;
+        }
       }
     }
 

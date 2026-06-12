@@ -4,7 +4,6 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hesabati/providers/theme_provider.dart'; // <-- استيراد Provider الثيم
 import 'package:hesabati/screens/SplashScreen.dart';
-import 'package:hesabati/screens/home_screen.dart';
 import 'package:hesabati/services/auth_service.dart';
 import 'services/auto_backup_service.dart';
 void main() {

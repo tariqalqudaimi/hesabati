@@ -111,7 +111,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
                                   Expanded(
                                     flex: 1,
                                     child: DropdownButtonFormField<String>(
-                                      value: _currency,
+                                      initialValue: _currency,
                                       decoration: _inputDecoration("العملة", Icons.currency_exchange),
                                       items: ['SAR', 'YER'].map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontWeight: FontWeight.bold)))).toList(),
                                       onChanged: (v) => setState(() => _currency = v!),
@@ -179,7 +179,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
 
   Widget _buildDropdown(String label, List<Person> items, Person? value, Function(Person?) onChanged, IconData icon, Color iconColor) {
     return DropdownButtonFormField<Person>(
-      value: value,
+      initialValue: value,
       decoration: _inputDecoration(label, icon).copyWith(prefixIcon: Icon(icon, color: iconColor)),
       items: items.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
       onChanged: onChanged,

@@ -63,3 +63,25 @@ final totalBalanceProvider = FutureProvider.family<double, String>((ref, currenc
   // اجمع كل الأرصدة للحصول على الإجمالي النهائي
   return balances.isEmpty ? 0.0 : balances.reduce((value, element) => value + element);
 });
+
+// ... في ملف database_providers.dart
+
+// Provider جديد: يحسب إجمالي الأموال الموجودة في الخزائن والبنوك لعملة معينة
+final totalWalletsBalanceProvider = FutureProvider.family<double, String>((ref, currency) async {
+  final dbHelper = ref.watch(databaseHelperProvider);
+
+  // 1. جلب كل الخزائن
+  final wallets = await dbHelper.getWallets();
+
+  // 2. تصفية حسب العملة
+  final filteredWallets = wallets.where((w) => w.currency == currency);
+
+  double total = 0.0;
+
+  // 3. جمع أرصدة الخزائن
+  for (var w in filteredWallets) {
+    total += await dbHelper.getWalletBalance(w.id!);
+  }
+
+  return total;
+});

@@ -65,7 +65,7 @@ class _CurrencyConverterDialogState extends State<CurrencyConverterDialog> {
                       Expanded(
                         child: DropdownButtonFormField<bool>(
                           dropdownColor: AppColors.lightGrey,
-                          value: _sarToYer,
+                          initialValue: _sarToYer,
                           decoration: InputDecoration(
         
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),

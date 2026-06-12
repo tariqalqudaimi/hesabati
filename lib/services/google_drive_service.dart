@@ -16,7 +16,7 @@ class GoogleDriveService {
       return _currentUser;
     } catch (e) {
       print('خطأ في تسجيل الدخول: $e');
-      throw e;
+      rethrow;
     }
   }
 
@@ -26,7 +26,7 @@ class GoogleDriveService {
   }
 
   Future<http.Client?> _getAuthClient() async {
-    if (_currentUser == null) _currentUser = await _googleSignIn.signInSilently();
+    _currentUser ??= await _googleSignIn.signInSilently();
     if (_currentUser == null) return null;
     final authHeaders = await _currentUser!.authHeaders;
     return GoogleAuthClient(authHeaders);

@@ -75,7 +75,7 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: 200.0,
+            expandedHeight: 250.0,
             pinned: true,
             backgroundColor: const Color(0xFF2C3E50),
             title: _isSearching
@@ -95,15 +95,13 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                   gradient: LinearGradient(colors: [Color(0xFF2C3E50), Color(0xFF4CA1AF)], begin: Alignment.topLeft, end: Alignment.bottomRight),
                 ),
                 child: SafeArea(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(height: 40),
-                      UserBalanceHeader(
-                        personId: widget.person.id!, currency: _selectedCurrency,
-                        startDate: _startDate, endDate: _endDate, searchQuery: _searchQuery,
-                      ),
-                    ],
+                  child: Center(
+                    child:
+                        UserBalanceHeader(
+                          personId: widget.person.id!, currency: _selectedCurrency,
+                          startDate: _startDate, endDate: _endDate, searchQuery: _searchQuery,
+                        ),
+
                   ),
                 ),
               ),
@@ -216,8 +214,11 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
       final transactions = await ref.read(transactionsProvider(widget.person.id!).future);
       if (transactions.isEmpty) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد بيانات'))); return; }
       String path = "";
-      if (value == 'pdf') path = await ExportService().exportToPdf(widget.person, transactions);
-      else path = await ExportService().exportToExcel(widget.person, transactions);
+      if (value == 'pdf') {
+        path = await ExportService().exportToPdf(widget.person, transactions);
+      } else {
+        path = await ExportService().exportToExcel(widget.person, transactions);
+      }
       if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم الحفظ: $path'), backgroundColor: Colors.green));
     }
   }
@@ -265,7 +266,7 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                             return Column(
                               children: [
                                 DropdownButtonFormField<int>(
-                                  value: selectedWalletId,
+                                  initialValue: selectedWalletId,
                                   decoration: const InputDecoration(labelText: 'خصم/إيداع في (الخزنة)', border: OutlineInputBorder()),
                                   items: validWallets.map((w) => DropdownMenuItem(value: w.id, child: Text(w.name))).toList(),
                                   onChanged: (v) => setStateDialog(() => selectedWalletId = v),
@@ -289,9 +290,9 @@ class _UserAccountScreenState extends ConsumerState<UserAccountScreen> {
                         ),
                         const SizedBox(height: 10),
                         Row(children: [
-                          Expanded(child: DropdownButtonFormField<String>(value: transactionType, decoration: const InputDecoration(labelText: 'النوع', border: OutlineInputBorder()), items: ['مصروف', 'إيراد'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() => transactionType = v!))),
+                          Expanded(child: DropdownButtonFormField<String>(initialValue: transactionType, decoration: const InputDecoration(labelText: 'النوع', border: OutlineInputBorder()), items: ['مصروف', 'إيراد'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() => transactionType = v!))),
                           const SizedBox(width: 10),
-                          Expanded(child: DropdownButtonFormField<String>(value: currency, decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()), items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() { currency = v!; selectedWalletId = null; }))), // تصفر الخزنة عند تغيير العملة
+                          Expanded(child: DropdownButtonFormField<String>(initialValue: currency, decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()), items: ['SAR', 'YER'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setStateDialog(() { currency = v!; selectedWalletId = null; }))), // تصفر الخزنة عند تغيير العملة
                         ]),
                         const SizedBox(height: 15),
                         Row(children: [
@@ -368,85 +369,79 @@ class UserBalanceHeader extends ConsumerWidget {
   final String currency;
   final DateTime? startDate;
   final DateTime? endDate;
-  final String searchQuery; // <-- المتغير الجديد
+  final String searchQuery;
 
-  const UserBalanceHeader({
-    super.key, 
-    required this.personId, 
-    required this.currency,
-    this.startDate,
-    this.endDate,
-    this.searchQuery = "", // <-- قيمة افتراضية فارغة
-  });
+  const UserBalanceHeader({super.key, required this.personId, required this.currency, this.startDate, this.endDate, this.searchQuery = ""});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // نراقب جميع المعاملات لهذا الشخص
     final transactionsAsync = ref.watch(transactionsProvider(personId));
 
     return transactionsAsync.when(
       data: (transactions) {
-        // --- 1. فلترة حسب العملة ---
         var filtered = transactions.where((t) => t.currency == currency);
-
-        // --- 2. فلترة حسب التاريخ (إذا وجد) ---
         if (startDate != null && endDate != null) {
           filtered = filtered.where((t) {
             final tDate = DateTime.parse(t.date);
-            return tDate.isAfter(startDate!.subtract(const Duration(days: 1))) && 
-                   tDate.isBefore(endDate!.add(const Duration(days: 1)));
+            return tDate.isAfter(startDate!.subtract(const Duration(days: 1))) && tDate.isBefore(endDate!.add(const Duration(days: 1)));
           });
         }
-
-        // --- 3. فلترة حسب البحث (الجديد) ---
         if (searchQuery.isNotEmpty) {
-          filtered = filtered.where((t) {
-            final descMatch = t.description.toLowerCase().contains(searchQuery.toLowerCase());
-            final amountMatch = t.amount.toString().contains(searchQuery);
-            return descMatch || amountMatch;
-          });
+          filtered = filtered.where((t) => t.description.toLowerCase().contains(searchQuery.toLowerCase()) || t.amount.toString().contains(searchQuery));
         }
 
-        // --- 4. حساب المجموع للنتائج المفلترة ---
-        double balance = 0.0;
+        double totalIncome = 0.0;
+        double totalExpense = 0.0;
         for (var t in filtered) {
           if (t.type == 'إيراد') {
-            balance += t.amount;
+            totalIncome += t.amount;
           } else {
-            balance -= t.amount;
+            totalExpense += t.amount;
           }
         }
+        double netBalance = totalIncome - totalExpense;
 
-        // عرض النتيجة
-        return Column(
-          children: [
-            Text(
-              balance.toStringAsFixed(2),
-              style: TextStyle(
-                fontSize: 34,
-                fontWeight: FontWeight.bold,
-                color: balance >= 0 ? AppColors.greenAccent : AppColors.redAccent,
-                shadows: const [Shadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4))]
-              ),
-            ),
-            Text(
-              currency == 'SAR' ? 'ريال سعودي' : 'ريال يمني',
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-            // عرض تنبيه صغير إذا كان هناك فلترة نشطة
-            if (startDate != null || searchQuery.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 5),
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min, // مهم جداً: تأخذ أقل مساحة ممكنة
+            children: [
+              const Text("الصافي", style: TextStyle(color: Colors.white70, fontSize: 12)),
+              // FittedBox يحل مشكلة خروج الأرقام عن الشاشة
+              FittedBox(
+                fit: BoxFit.scaleDown,
                 child: Text(
-                  searchQuery.isNotEmpty ? "(نتائج البحث)" : "(رصيد الفترة المحددة)",
-                  style: const TextStyle(color: Colors.yellowAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                  netBalance.toStringAsFixed(2),
+                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: netBalance >= 0 ? const Color(0xFF4EE44E) : const Color(0xFFFF6B6B)),
                 ),
-              )
-          ],
+              ),
+              Text(currency, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              const Divider(color: Colors.white24, height: 15),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  // Expanded يحل مشكلة الـ Incorrect ParentData
+                  Expanded(child: _buildStatItem("عليه (مدفوعات)", totalExpense, const Color(0xFFFF8A80))),
+                  Container(width: 1, height: 30, color: Colors.white24),
+                  Expanded(child: _buildStatItem("له (مقبوضات)", totalIncome, const Color(0xFF69F0AE))),
+                ],
+              ),
+            ],
+          ),
         );
       },
       loading: () => const CircularProgressIndicator(color: Colors.white),
       error: (_, __) => const Text("!", style: TextStyle(color: Colors.white)),
+    );
+  }
+
+  Widget _buildStatItem(String label, double amount, Color color) {
+    return Column(
+      children: [
+        FittedBox(child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10))),
+        const SizedBox(height: 4),
+        FittedBox(child: Text(amount.toStringAsFixed(0), style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16))),
+      ],
     );
   }
 }

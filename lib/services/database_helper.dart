@@ -227,6 +227,56 @@ class DatabaseHelper {
     return await db.insert('wallets', wallet.toMap());
   }
 
+  // تعديل بيانات الخزنة
+  Future<void> updateWallet(Wallet wallet) async {
+    final db = await database;
+    await db.update(
+      'wallets',
+      wallet.toMap(),
+      where: 'id = ?',
+      whereArgs: [wallet.id],
+    );
+  }
+
+  // دالة ذكية لتسوية الرصيد (تعديل الرصيد الحالي)
+  Future<void> adjustWalletBalance({
+    required int walletId,
+    required double oldBalance,
+    required double newBalance,
+    required String currency,
+  }) async {
+    final db = await database;
+    
+    // حساب الفارق
+    double difference = newBalance - oldBalance;
+    
+    if (difference == 0) return; // لا يوجد تغيير
+
+    // تحديد نوع العملية (فائض أم عجز)
+    String type = difference > 0 ? 'إيراد' : 'مصروف';
+    double amount = difference.abs();
+
+    // البحث عن "شخص" للنظام لتسجيل التسوية عليه
+    int systemPersonId;
+    final systemUser = await db.query('persons', where: 'name = ?', whereArgs: ['تسوية رصيد']);
+    if (systemUser.isNotEmpty) {
+      systemPersonId = systemUser.first['id'] as int;
+    } else {
+      systemPersonId = await db.insert('persons', {'name': 'تسوية رصيد', 'phone': ''});
+    }
+
+    // إضافة معاملة التصحيح
+    await db.insert('transactions', {
+      'personId': systemPersonId,
+      'walletId': walletId,
+      'type': type,
+      'amount': amount,
+      'description': 'تعديل رصيد يدوي (جرد)',
+      'date': DateTime.now().toIso8601String(),
+      'currency': currency,
+    });
+  }
+
   Future<List<Wallet>> getWallets() async {
     final db = await database;
     final maps = await db.query('wallets');
@@ -312,5 +362,59 @@ class DatabaseHelper {
     });
   }
 
-}
+  // دالة النقل والمصارفة بين الخزائن
+  Future<void> transferBetweenWallets({
+    required int fromWalletId,
+    required String fromWalletName,
+    required int toWalletId,
+    required String toWalletName,
+    required double sourceAmount,   // المبلغ المخصوم
+    required String sourceCurrency, // عملة المصدر
+    required double targetAmount,   // المبلغ المودع (بعد الصرف)
+    required String targetCurrency, // عملة المستلم
+    required double exchangeRate,   // سعر الصرف (للتوثيق)
+    required String description,
+  }) async {
+    final db = await database;
 
+    // البحث عن "تحويلات داخلية"
+    int systemPersonId;
+    final systemUser = await db.query('persons', where: 'name = ?', whereArgs: ['تحويلات داخلية']);
+    if (systemUser.isNotEmpty) {
+      systemPersonId = systemUser.first['id'] as int;
+    } else {
+      systemPersonId = await db.insert('persons', {'name': 'تحويلات داخلية', 'phone': ''});
+    }
+
+    final String transferId = "WTR-${DateTime.now().millisecondsSinceEpoch}";
+
+    await db.transaction((txn) async {
+      final date = DateTime.now().toIso8601String();
+
+      // 1. خصم من المصدر (بالعملة الأصلية)
+      await txn.insert('transactions', {
+        'personId': systemPersonId,
+        'walletId': fromWalletId,
+        'type': 'مصروف',
+        'amount': sourceAmount,
+        'description': 'تحويل إلى: $toWalletName (سعر صرف: $exchangeRate) $description',
+        'date': date,
+        'currency': sourceCurrency,
+        'transferId': transferId,
+      });
+
+      // 2. إيداع في الوجهة (بالعملة الجديدة)
+      await txn.insert('transactions', {
+        'personId': systemPersonId,
+        'walletId': toWalletId,
+        'type': 'إيراد',
+        'amount': targetAmount,
+        'description': 'تحويل من: $fromWalletName (سعر صرف: $exchangeRate) $description',
+        'date': date,
+        'currency': targetCurrency,
+        'transferId': transferId,
+      });
+    });
+  }
+
+}

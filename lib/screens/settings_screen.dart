@@ -154,10 +154,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   },
                 ),
               ]),
+      _buildSettingsCard([
               SwitchListTile(
                 secondary: const Icon(Icons.message, color: Colors.green), // أيقونة واتساب
-                title: const Text('إرسال رسالة واتساب'),
-                subtitle: const Text('تلقائياً عند إضافة معاملة'),
+                title: const Text('إرسال رسالة واتساب',style: TextStyle(color: AppColors.black87),),
+                subtitle: const Text('تلقائياً عند إضافة معاملة',style: TextStyle(color: AppColors.black87),),
                 value: _isAutoSmsEnabled,
                 onChanged: (value) async {
                   await MessagingService.setAutoSmsEnabled(value); // حفظ في الذاكرة
@@ -165,6 +166,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   print("Auto SMS Enabled: $_isAutoSmsEnabled");
                 },
               ),
+  ]),
               _buildSectionTitle("النسخ الاحتياطي (محلي)"),
               _buildSettingsCard([
                 ListTile(
